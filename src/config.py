@@ -34,14 +34,16 @@ SEED = 42
 # Random warm-up moves applied before either model takes over.
 # Both players alternate during warm-up; no triplets are recorded.
 # Helps M1 encounter mid-game positions quickly. Set to 0 to disable.
-RANDOM_INIT_MOVES = 4
+RANDOM_INIT_MOVES = 6
 
 # ── Policy gradient hyperparameters ──────────────────────────────────────────
-GAMES_PER_GROUP = 20    # games per M2 opponent before one gradient step
+GAMES_PER_GROUP = 50    # games per M2 opponent before one gradient step
 BATCH_SIZE      = 32    # triplets per gradient step — MUST stay constant (TF warning)
 GAMMA           = 0.99  # discount factor applied to terminal reward
-LEARNING_RATE   = 1e-4  # Adam optimizer learning rate
+LEARNING_RATE   = 5e-4  # Adam optimizer learning rate
 NUM_GROUPS      = 500   # total outer training iterations (groups)
+ENTROPY_COEF    = 0.01  # weight of entropy bonus in PG loss (encourages exploration)
+GRAD_CLIP_NORM  = 1.0   # global gradient norm cap (prevents instability from reward spikes)
 
 # ── Opponent pool settings ────────────────────────────────────────────────────
 POOL_CAP          = 20  # maximum pool size; originals always kept regardless

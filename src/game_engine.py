@@ -79,6 +79,29 @@ def is_terminal(board: np.ndarray):
     return False, None
 
 
+def winning_move(board: np.ndarray, player: int):
+    """
+    Return the first column that gives `player` an immediate four-in-a-row, or None.
+    Used to make M2 a stronger opponent (per the assignment's adversarial training note).
+    """
+    for col in legal_moves(board):
+        if check_win(make_move(board, col, player), player):
+            return col
+    return None
+
+
+def blocking_move(board: np.ndarray, player: int):
+    """
+    Return the first column that blocks the opponent's immediate win, or None.
+    Used to make M2 a stronger opponent (per the assignment's adversarial training note).
+    """
+    opponent = -player
+    for col in legal_moves(board):
+        if check_win(make_move(board, col, opponent), opponent):
+            return col
+    return None
+
+
 def random_moves(board: np.ndarray, n: int, first_player: int = +1):
     """
     Apply up to `n` random legal moves starting with `first_player`, alternating.

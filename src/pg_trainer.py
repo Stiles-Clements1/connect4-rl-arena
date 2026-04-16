@@ -60,6 +60,30 @@ def _sample_move(wrapper: ModelWrapper, board: np.ndarray, player: int) -> tuple
     return col, log_prob
 
 
+def _sample_move_m2(wrapper: ModelWrapper, board: np.ndarray, player: int) -> tuple:
+    """
+    Stronger move selection for M2 (per the assignment's adversarial training note):
+      1. If M2 can win immediately, play that column.
+      2. If M1 would win on the next move, block it.
+      3. Otherwise, fall back to stochastic model sampling over legal moves.
+
+    This makes M2 a harder opponent, producing clearer win/loss signals for M1.
+    M1's _sample_move is unchanged — M1 learns only through SGD, not rule shortcuts.
+    """
+    # Immediate win
+    col = ge.winning_move(board, player)
+    if col is not None:
+        return col, 0.0
+
+    # Block opponent's immediate win
+    col = ge.blocking_move(board, player)
+    if col is not None:
+        return col, 0.0
+
+    # Stochastic model sampling
+    return _sample_move(wrapper, board, player)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Single game
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,8 +133,8 @@ def play_game(m1_wrapper: ModelWrapper, m2_wrapper: ModelWrapper) -> tuple:
             m1_boards.append(board.copy())
             m1_moves.append(col)
         else:
-            # M2's turn: also sample stochastically (same protocol as M1)
-            col, _ = _sample_move(m2_wrapper, board, m2_player)
+            # M2's turn: use stronger move selection (win/block before sampling)
+            col, _ = _sample_move_m2(m2_wrapper, board, m2_player)
 
         board = ge.make_move(board, col, next_player)
         done, winner = ge.is_terminal(board)
@@ -207,9 +231,20 @@ def gradient_step(m1_wrapper: ModelWrapper, optimizer, triplets: list) -> float:
         action_probs = tf.gather(probs, actions_tf, batch_dims=1)  # (BATCH_SIZE,)
 
         # Policy gradient loss: maximise E[G * log π] ⟺ minimise the negative
-        loss = -tf.reduce_mean(returns_tf * tf.math.log(action_probs + 1e-8))
+        pg_loss = -tf.reduce_mean(returns_tf * tf.math.log(action_probs + 1e-8))
+
+        # Entropy bonus: -H(π) added to loss discourages the policy from collapsing
+        # to a small set of moves when it is mostly losing
+        entropy = -tf.reduce_mean(
+            tf.reduce_sum(probs * tf.math.log(probs + 1e-8), axis=-1)
+        )
+        loss = pg_loss - _cfg.ENTROPY_COEF * entropy
 
     grads = tape.gradient(loss, m1_wrapper.model.trainable_variables)
+
+    # Clip gradient norm to guard against reward-signal spikes destabilising training
+    grads, _ = tf.clip_by_global_norm(grads, _cfg.GRAD_CLIP_NORM)
+
     optimizer.apply_gradients(zip(grads, m1_wrapper.model.trainable_variables))
 
     return float(loss)
