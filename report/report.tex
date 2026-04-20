@@ -1,0 +1,362 @@
+% =============================================================================
+% Connect-4 Reinforcement Learning - Project 3 Report
+% Optimization II, UT Austin MSBA, Spring 2026
+%
+% This file is the skeleton. Paste the whole thing into Overleaf, then iterate
+% section by section. All figures should live in report/figures/ and can be
+% referenced by filename alone thanks to \graphicspath below.
+% =============================================================================
+
+\documentclass[11pt]{article}
+
+% ── Packages ─────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}          % figures
+\usepackage{booktabs}          % nicer tables (\toprule, \midrule, \bottomrule)
+\usepackage{amsmath, amssymb}  % math
+\usepackage{hyperref}          % clickable refs and URLs
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{parskip}           % space between paragraphs, no first-line indent
+
+% Figures live in the figures/ subfolder; use \includegraphics{name.png} only.
+\graphicspath{{figures/}}
+
+% ── Title block ──────────────────────────────────────────────────────────────
+\title{%
+  Connect-4 Reinforcement Learning: \\
+  \large Comparing Policy Gradient and Deep Q-Network Agents
+}
+\author{%
+  Zan Merrill \quad Stiles Clements \quad Alina Hota \quad Luke Hartfield \\[0.6em]
+  \normalsize MSBA 2026 Optimization II - Project 3
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% ── Executive summary ────────────────────────────────────────────────────────
+\begin{abstract}
+% 1–2 paragraph summary written LAST. Include:
+%   - What we built (policy gradient agent, Deep Q-Network agent, eval vs each other)
+%   - Headline result (which won, by how much)
+%   - Recommendation to the "boss": hire a reinforcement learning expert? yes/no and why
+\end{abstract}
+
+% ── 1. Introduction ──────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+Our company is evaluating reinforcement learning as a technique for
+generating strong computer opponents in single-player modes of our board
+games. Today our opponents are rule-based, which caps opponent quality at
+whatever heuristics a designer can hand-write; reinforcement learning
+promises agents that \emph{learn} to play, and can keep improving with more
+compute. Before committing engineering resources, we wanted a concrete pilot
+on a game simple enough to prototype end-to-end in a few weeks but
+non-trivial enough that the results would generalize. We chose Connect-4.
+
+Connect-4 is a good pilot for three reasons. First, it is \emph{solved} (Allis,
+1988): the first player wins with perfect play, so we have a well-defined
+ceiling for any agent. Second, it is small: only seven legal moves from any
+position, which makes training loops cheap and makes full-game simulations
+feasible inside a reinforcement learning inner loop. Third, it closely
+resembles in structure the games we actually sell (turn-based, perfect
+information, discrete action space), so lessons transfer.
+
+This report covers two reinforcement learning paradigms we implemented and
+compared. Policy gradient (Section~\ref{ssec:pg} and
+Section~\ref{sec:results}) directly optimizes a policy network
+$\pi_\theta(a \mid s)$ that outputs a probability distribution over moves:
+each parameter update is taken in the direction of the estimated gradient
+$\nabla_\theta \mathbb{E}_{\tau \sim \pi_\theta}\!\bigl[R(\tau)\bigr]$ of the
+expected return $R(\tau)$ over trajectories $\tau$. Deep Q-Network
+(Section~\ref{ssec:dqn}) instead learns a state-action value function
+$Q_\theta(s, a)$ that estimates the discounted return of playing column $a$
+in position $s$ and following a greedy policy thereafter; moves at play time
+are chosen as $\arg\max_a Q_\theta(s, a)$ over legal columns. Both agents are
+trained by self-play against a growing pool of opponents that includes
+supervised baseline networks from a previous project plus frozen snapshots
+of the improving agent itself. We measure performance by win rate against
+shared baseline opponents and by head-to-head play between the two agents.
+
+The central questions this report answers for the reader are the following.
+(1) Does self-play reinforcement learning produce a meaningfully stronger
+Connect-4 agent than the supervised baselines we started from?
+(2) Which of policy gradient or Deep Q-Network is the better investment for
+our use case?
+(3) Is it worth hiring dedicated reinforcement learning expertise to pursue
+this further?
+
+% ── 2. Methodology ───────────────────────────────────────────────────────────
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Board representation and game engine}
+\label{ssec:engine}
+
+All game logic operates on a canonical board: a $6 \times 7$ integer array
+where $+1$ denotes a piece belonging to the first player (red), $-1$ denotes
+the second player (yellow), and $0$ denotes an empty cell. Row~0 is the top
+of the board; row~5 is the bottom. A dropped piece falls to the
+highest-numbered empty row in its column, matching standard Connect-4 rules.
+
+Our engine exposes the primitives that the training loops need:
+\texttt{legal\_moves} returns the set of non-full columns;
+\texttt{make\_move} applies a move and returns a new board;
+\texttt{is\_terminal} detects win, loss, or draw states; and
+\texttt{winning\_move}/\texttt{blocking\_move} look one ply ahead for
+immediate tactical moves. The last two are used to strengthen opponent
+behaviour (see Section~\ref{ssec:pg}); the agent under training never uses
+them, so it is forced to learn tactics through gradient descent rather than
+inherit them from hand-written rules.
+
+Because our teammates' supervised networks were trained on slightly different
+input encodings, our \texttt{model\_loader} module wraps every network and
+exposes a single \texttt{predict\_probs(board, player)} interface.
+Internally it converts the canonical board into whichever encoding the
+underlying network expects: a single-channel signed representation (Type~A,
+used by Luke's networks), a two-channel one-hot per-player representation
+(Type~B, used by the Stiles networks and Zan's convolutional network), or a flattened variant
+of Type~B (used by Zan's Transformer). This abstraction keeps every other
+module in the codebase encoding-agnostic.
+
+\subsection{Starting models}
+\label{ssec:start}
+
+Each member of the team contributed two supervised networks from a prior
+project, trained to mimic Monte-Carlo tree search decisions: a convolutional
+network and a Transformer per contributor, for six networks in total. We designated the
+Stiles Transformer as $M_1$, the agent we would improve via
+reinforcement learning. The remaining five networks plus the original
+(frozen) copy of $M_1$ formed the initial opponent pool. Per the assignment's
+requirements, these original networks are never removed from the pool during
+training.
+
+\subsection{Policy gradient self-play}
+\label{ssec:pg}
+
+Our policy gradient procedure trains $M_1$ over many \emph{groups} of
+self-play games. Each group proceeds as follows.
+
+\begin{enumerate}
+    \item Sample an opponent $M_2$ uniformly at random from the current
+    opponent pool.
+
+    \item Play $n_\text{games}$ games of $M_1$ versus $M_2$. For each game,
+    the side $M_1$ plays (red or yellow) is chosen by drawing uniformly from
+    $\{+1, -1\}$, and a small number of moves at the start are played
+    uniformly at random by both sides to diversify the positions the agent
+    encounters.
+
+    \item On every $M_1$ turn after the warm-up, we sample a move
+    stochastically from the masked, renormalized policy output. If
+    $\mathcal{L}(s) \subseteq \{0, 1, \ldots, 6\}$ is the set of legal
+    columns in board state $s$ and $\pi_\theta(a \mid s)$ is the raw
+    policy-network output, we define the masked policy
+    \[
+        \tilde{\pi}_\theta(a \mid s)
+        \;=\;
+        \frac{\pi_\theta(a \mid s) \cdot \mathbf{1}\!\bigl[a \in \mathcal{L}(s)\bigr]}
+             {\sum_{a' \in \mathcal{L}(s)} \pi_\theta(a' \mid s)}
+    \]
+    and draw the move as $a_t \sim \tilde{\pi}_\theta(\cdot \mid s_t)$.
+    Stochastic sampling, rather than $\arg\max$ selection, is what provides
+    the exploration signal that the policy gradient estimator relies on.
+
+    \item For every $M_1$ move in a completed game, we record the board state
+    $s_t$, the chosen column $a_t$, and the discounted return from the
+    terminal outcome,
+    \[
+        G_t \;=\; r \cdot \gamma^{N - 1 - t},
+    \]
+    where $r \in \{+1, 0, -1\}$ is the game outcome from $M_1$'s perspective
+    (win, draw, loss), $N$ is the number of $M_1$ moves in that game, and
+    $\gamma \in (0, 1]$ is the discount factor. This weighting assigns
+    higher credit to moves closer to the end of the game.
+
+    \item After a fixed number of games we sample a fixed-size mini-batch
+    $\mathcal{B}$ of triplets $(s_t, a_t, G_t)$ and take a single gradient
+    descent step on the policy gradient objective
+    \[
+        \mathcal{L}(\theta)
+        \;=\;
+        -\,\frac{1}{|\mathcal{B}|}
+        \sum_{(s_t, a_t, G_t) \in \mathcal{B}}
+            G_t \cdot \log \tilde{\pi}_\theta(a_t \mid s_t)
+        \;-\; \beta \, \mathcal{H}\!\bigl(\tilde{\pi}_\theta(\cdot \mid s_t)\bigr),
+    \]
+    where
+    $\mathcal{H}\!\bigl(\tilde{\pi}_\theta(\cdot \mid s_t)\bigr)
+     = -\sum_{a} \tilde{\pi}_\theta(a \mid s_t) \log \tilde{\pi}_\theta(a \mid s_t)$
+    is the entropy of the masked policy at $s_t$ and $\beta \geq 0$ is its
+    coefficient. The entropy term discourages the policy from collapsing to
+    a handful of moves; we anneal $\beta$ linearly from a positive starting
+    value $\beta_0$ down to zero,
+    \[
+        \beta(g) \;=\; \beta_0 \cdot \Bigl(1 - \tfrac{g - 1}{G - 1}\Bigr),
+    \]
+    where $g$ is the current group and $G$ is the total number of groups, so
+    the policy can sharpen in the late stage of training. The parameter
+    update is
+    \[
+        \theta \;\leftarrow\; \theta - \eta \, \nabla_\theta \mathcal{L}(\theta),
+    \]
+    where $\eta$ is the learning rate.
+
+    \item Periodically, a frozen copy of $M_1$'s current weights is added to
+    the opponent pool. This enforces self-play against a moving target: as
+    the agent improves, the pool slowly accumulates stronger versions of
+    itself while never removing the original supervised networks.
+\end{enumerate}
+
+Opponents are treated slightly asymmetrically. When $M_2$'s turn arrives we
+first check for immediate tactical moves: if $M_2$ can win in a single move
+we play that column; if $M_1$ would win on its next move we play the column
+that blocks it. Only if neither shortcut applies do we sample from $M_2$'s
+masked policy. $M_1$ has no such shortcut. This adversarial setup pushes
+$M_1$ to learn structure that outplays a one-move-lookahead opponent rather
+than winning cheaply by exploiting opponents that miss obvious threats.
+
+\subsection{Deep Q-Network}
+\label{ssec:dqn}
+
+Our Deep Q-Network agent uses the same convolutional feature extractor as the
+policy gradient network but replaces the softmax output with a linear layer
+that emits a value $Q_\theta(s, a)$ for each of the seven columns. Actions
+are selected with an $\epsilon$-greedy policy over the legal columns,
+\[
+    a_t \;=\;
+    \begin{cases}
+        \text{uniform}\bigl(\mathcal{L}(s_t)\bigr) & \text{with probability } \epsilon, \\[0.2em]
+        \displaystyle \arg\max_{a \in \mathcal{L}(s_t)} Q_\theta(s_t, a) & \text{with probability } 1 - \epsilon,
+    \end{cases}
+\]
+where the exploration rate $\epsilon$ is annealed from $1.0$ at the start of
+training down to a small terminal value $\epsilon_\text{end}$.
+
+Transitions are stored in a replay buffer $\mathcal{D}$ as tuples
+$(s_t, a_t, r_t, s_{t+1}, d_t)$, where $s_{t+1}$ is the board at the agent's
+\emph{next} turn after the opponent has moved (matching the coin-game
+framing from class rather than storing the post-agent-move board), and
+$d_t \in \{0, 1\}$ indicates whether $s_{t+1}$ is terminal. Training
+minimises the squared Double Deep Q-Network (van Hasselt et al., 2016)
+temporal-difference error
+\[
+    \mathcal{L}(\theta)
+    \;=\;
+    \mathbb{E}_{(s_t, a_t, r_t, s_{t+1}, d_t) \,\sim\, \mathcal{D}}
+    \Bigl[\bigl(y_t - Q_\theta(s_t, a_t)\bigr)^{2}\Bigr],
+\]
+with the bootstrapped target
+\[
+    y_t
+    \;=\;
+    r_t
+    \;+\;
+    (1 - d_t)\, \gamma \cdot
+    Q_{\theta^{-}}\!\Bigl(
+        s_{t+1},\,
+        \arg\max_{a \in \mathcal{L}(s_{t+1})} Q_\theta(s_{t+1}, a)
+    \Bigr),
+\]
+where the online network $Q_\theta$ chooses the bootstrap action and the
+target network $Q_{\theta^{-}}$ evaluates it. The target-network weights are
+refreshed as $\theta^{-} \leftarrow \theta$ every fixed number of training
+steps. This combination of a replay buffer, a target network,
+$\epsilon$-annealing, and Double Deep Q-Network targets is standard for
+stabilising value-based deep reinforcement learning.
+
+To match the policy gradient setup, the Deep Q-Network agent is trained
+against opponents drawn uniformly from the same pool of supervised networks.
+To avoid many games that end on move three and provide no meaningful
+learning signal, each game is initialised with a small number of uniformly
+random moves before the agent takes over; those random moves are not
+inserted as transitions into $\mathcal{D}$.
+
+\subsection{Evaluation protocol}
+\label{ssec:eval}
+
+To compare agents fairly we use a shared evaluation harness. For each
+pairing we play $N$ games and alternate which agent moves first so any
+first-player advantage is averaged out. We report win rate, draw rate, and
+average game length. Baselines include the original supervised networks, a
+uniformly random policy, and depth-limited minimax at search depths of~3
+and~5 as calibrated strength references. Unlike the training loops,
+evaluation selects the policy gradient move as
+$\arg\max_{a \in \mathcal{L}(s)} \pi_\theta(a \mid s)$ and the Deep Q-Network
+move as $\arg\max_{a \in \mathcal{L}(s)} Q_\theta(s, a)$, because at
+deployment we want the strongest move rather than a sample.
+
+% ── 3. Results ───────────────────────────────────────────────────────────────
+\section{Results}
+\label{sec:results}
+
+\subsection{Policy gradient training}
+% policy gradient training curve (from logs/training_curves.png). Discuss:
+%   - Starting win rate (~??%)
+%   - Trajectory (plateau at ~60%, why)
+%   - Effect of entropy annealing (if we ran the ablation)
+%
+% Example figure reference - copy the file into report/figures/ first:
+%
+% \begin{figure}[h]
+%   \centering
+%   \includegraphics[width=0.9\textwidth]{pg_training_curves.png}
+%   \caption{policy gradient policy loss (left) and win rate (right) over 500 training groups
+%   against a uniformly-sampled opponent pool. The dashed line is the 50\%
+%   baseline.}
+%   \label{fig:pg_training}
+% \end{figure}
+
+\subsection{Deep Q-Network training}
+
+\subsection{Head-to-head: policy gradient, Deep Q-Network, and minimax}
+% Results table. Use booktabs:
+%
+% \begin{table}[h]
+%   \centering
+%   \begin{tabular}{lrrr}
+%     \toprule
+%     Agent & vs Random & vs Depth-3 Minimax & vs Depth-5 Minimax \\
+%     \midrule
+%     policy gradient (group 500)  & ??\% & ??\% & ??\% \\
+%     Deep Q-Network             & ??\% & ??\% & ??\% \\
+%     \bottomrule
+%   \end{tabular}
+%   \caption{Win rates (100 games each, first-player randomized).}
+%   \label{tab:headtohead}
+% \end{table}
+
+% ── 4. Discussion ────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{What worked}
+% - Self-play against a diverse pool of opponents
+% - Stochastic move sampling (vs argmax) for exploration
+% - Parallel-game inference on GPU (enabled long training runs)
+
+\subsection{What did not}
+% - policy gradient plateau around 60% win rate - likely a pool-saturation equilibrium
+%   (after many groups, M1 plays mostly its own snapshots).
+% - Deep Q-Network learning vs fake vs real opponents (if relevant)
+% - Anything that failed outright
+
+\subsection{Tournament performance}
+% Fill in after the tournament:
+%   - Pool-round results (6 games, W/L/D)
+%   - Bracket outcome
+%   - What happened in the games we lost
+
+% ── 5. Recommendation ────────────────────────────────────────────────────────
+\section{Recommendation}
+\label{sec:reco}
+% This is the "boss asked us if we should hire an reinforcement learning expert" section.
+%   - Yes/no/maybe with quantitative justification from the results.
+%   - What you would do differently with more time and expertise (AlphaZero-style
+%     Monte-Carlo tree search + self-play, distributional Deep Q-Network, population-based training, etc.)
+%   - Business framing: development cost vs opponent quality for single-player.
+
+\end{document}

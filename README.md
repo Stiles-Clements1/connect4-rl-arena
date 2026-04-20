@@ -1,5 +1,12 @@
 # Project 3 — Connect-4 Reinforcement Learning
 
+## Report (Q7)
+
+The final written report is authored in Overleaf:
+**[Overleaf project](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028)**
+
+The LaTeX source skeleton lives at [`report/report.tex`](report/report.tex); figures go in `report/figures/`. Iterate on Overleaf, then sync back to this folder at the end if we want the final `.tex` checked into git.
+
 ## What is implemented
 
 This repository covers **Questions 1–3** of the assignment (policy gradient self-play).  
