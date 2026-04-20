@@ -1,16 +1,9 @@
 # Project 3 — Connect-4 Reinforcement Learning
 
-## Report (Q7)
-
-The final written report is authored in Overleaf:
-**[Overleaf project](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028)**
-
-The LaTeX source skeleton lives at [`report/report.tex`](report/report.tex); figures go in `report/figures/`. Iterate on Overleaf, then sync back to this folder at the end if we want the final `.tex` checked into git.
-
 ## What is implemented
 
 This repository covers **Questions 1–3** of the assignment (policy gradient self-play).  
-Questions 4–7 (DQN, actor-critic, tournament, report) are for teammates to add.
+Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
 
 | Question | Description | Status |
 |---|---|---|
@@ -18,6 +11,7 @@ Questions 4–7 (DQN, actor-critic, tournament, report) are for teammates to add
 | Q2 | Policy gradient training loop | ✓ `pg_trainer.py` |
 | Q3 | Opponent pool with M1 snapshots | ✓ `opponent_pool.py` |
 | Q4 | DQN training | — see note below |
+| Q7 | Written report | Skeleton at `report/` → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
 
 ---
 
@@ -41,6 +35,10 @@ Opti Proj 3/
 │
 ├── notebooks/
 │   └── project3_pg_training.ipynb   deliverable notebook — thin, imports from src/
+│
+├── report/                           LaTeX source for the Q7 written report
+│   ├── report.tex                    skeleton; kept in sync with Overleaf
+│   └── figures/                      .png / .pdf figures referenced from report.tex
 │
 ├── checkpoints/                      M1 snapshots saved during training
 └── logs/                             training_log.json + training_curves.png
