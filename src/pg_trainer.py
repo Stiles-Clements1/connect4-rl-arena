@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 import tensorflow as tf
+import wandb
 
 from . import config as _cfg
 from . import game_engine as ge
@@ -160,35 +161,6 @@ def play_game(m1_wrapper: ModelWrapper, m2_wrapper: ModelWrapper) -> tuple:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Group of games
-# ─────────────────────────────────────────────────────────────────────────────
-
-def collect_triplets(m1_wrapper: ModelWrapper, m2_wrapper: ModelWrapper) -> tuple:
-    """
-    Play GAMES_PER_GROUP games and pool all triplets.
-
-    Returns:
-        all_triplets : list of (board, m1_player, col, G_t)
-        stats        : dict with keys 'wins', 'draws', 'losses'
-    """
-    all_triplets = []
-    wins = draws = losses = 0
-
-    for _ in range(_cfg.GAMES_PER_GROUP):
-        triplets, winner, m1_player = play_game(m1_wrapper, m2_wrapper)
-        all_triplets.extend(triplets)
-        if winner == m1_player:
-            wins += 1
-        elif winner == 0:
-            draws += 1
-        elif winner is not None:   # -m1_player
-            losses += 1
-        # winner == None means game ended in warm-up; excluded from counts
-
-    return all_triplets, {"wins": wins, "draws": draws, "losses": losses}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Gradient step
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -260,15 +232,35 @@ def train(m1_wrapper: ModelWrapper, pool: OpponentPool) -> dict:
 
     Each group:
       1. Sample M2 from the pool.
-      2. Collect triplets from GAMES_PER_GROUP games.
-      3. Take one gradient step with a fixed BATCH_SIZE.
-      4. Checkpoint M1 every CHECKPOINT_INTERVAL groups.
+      2. Play GAMES_PER_GROUP games, taking one gradient step every
+         GRAD_STEP_EVERY_N_GAMES games on that fresh mini-batch of triplets.
+         No data is reused across gradient steps.
+      3. Print every group with a LOG_WINDOW-group rolling average for live monitoring.
+      4. Checkpoint M1 every CHECKPOINT_INTERVAL groups, keeping only the
+         MAX_CHECKPOINTS most recent files (oldest deleted automatically).
       5. Maybe add a frozen M1 snapshot to the pool every POOL_ADD_INTERVAL groups.
 
     Returns a log dict with per-group metrics (also saved to logs/).
     """
     os.makedirs(_cfg.CHECKPOINT_DIR, exist_ok=True)
     os.makedirs(_cfg.LOG_DIR,        exist_ok=True)
+
+    wandb.init(
+        project="connect4-pg",
+        config={
+            "learning_rate":           _cfg.LEARNING_RATE,
+            "games_per_group":         _cfg.GAMES_PER_GROUP,
+            "batch_size":              _cfg.BATCH_SIZE,
+            "gamma":                   _cfg.GAMMA,
+            "num_groups":              _cfg.NUM_GROUPS,
+            "random_init_moves":       _cfg.RANDOM_INIT_MOVES,
+            "entropy_coef":            _cfg.ENTROPY_COEF,
+            "grad_clip_norm":          _cfg.GRAD_CLIP_NORM,
+            "grad_step_every_n_games": _cfg.GRAD_STEP_EVERY_N_GAMES,
+            "pool_cap":                _cfg.POOL_CAP,
+            "pool_add_interval":       _cfg.POOL_ADD_INTERVAL,
+        },
+    )
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=_cfg.LEARNING_RATE)
 
@@ -280,48 +272,79 @@ def train(m1_wrapper: ModelWrapper, pool: OpponentPool) -> dict:
         "pool_size": [],
     }
 
+    checkpoint_files = []  # in-memory list of saved paths, oldest first, for rotation
+
     for group in range(1, _cfg.NUM_GROUPS + 1):
 
-        # 1. Pick a random M2 opponent for this group of games
+        # 1. Pick a random M2 opponent for this group
         m2 = pool.sample()
 
-        # 2. Play games and collect state-action-return triplets
-        triplets, stats = collect_triplets(m1_wrapper, m2)
+        # 2. Play GAMES_PER_GROUP games; gradient step every GRAD_STEP_EVERY_N_GAMES games
+        batch_triplets = []
+        step_losses    = []
+        wins = draws = losses = 0
 
-        if not triplets:
-            # Extremely unlikely: skip if every game ended during warm-up
-            print(f"[Group {group:4d}] No triplets collected — skipping.")
-            continue
+        for game_num in range(1, _cfg.GAMES_PER_GROUP + 1):
+            triplets, winner, m1_player = play_game(m1_wrapper, m2)
+            batch_triplets.extend(triplets)
 
-        # 3. One gradient step
-        loss = gradient_step(m1_wrapper, optimizer, triplets)
+            if winner == m1_player:
+                wins += 1
+            elif winner == 0:
+                draws += 1
+            elif winner is not None:
+                losses += 1
 
-        # Compute win / draw rates for logging
-        total     = stats["wins"] + stats["draws"] + stats["losses"]
-        win_rate  = stats["wins"]  / total if total else 0.0
-        draw_rate = stats["draws"] / total if total else 0.0
+            # Take one gradient step on this fresh mini-batch, then discard it
+            if game_num % _cfg.GRAD_STEP_EVERY_N_GAMES == 0 and batch_triplets:
+                step_losses.append(gradient_step(m1_wrapper, optimizer, batch_triplets))
+                batch_triplets = []   # discard — no data reuse
+
+        avg_loss  = sum(step_losses) / len(step_losses) if step_losses else float("nan")
+        total     = wins + draws + losses
+        win_rate  = wins  / total if total else 0.0
+        draw_rate = draws / total if total else 0.0
 
         log["group"].append(group)
-        log["loss"].append(loss)
+        log["loss"].append(avg_loss)
         log["win_rate"].append(win_rate)
         log["draw_rate"].append(draw_rate)
         log["pool_size"].append(len(pool))
 
-        # 4. Checkpoint M1 to disk
+        # 3. Rolling averages over the last LOG_WINDOW groups (x==x filters NaN)
+        recent_loss = [x for x in log["loss"][-_cfg.LOG_WINDOW:] if x == x]
+        recent_win  = log["win_rate"][-_cfg.LOG_WINDOW:]
+        roll_loss   = sum(recent_loss) / len(recent_loss) if recent_loss else float("nan")
+        roll_win    = sum(recent_win)  / len(recent_win)  if recent_win  else 0.0
+
+        # Print every group for live monitoring
+        print(
+            f"[Group {group:4d}] loss={avg_loss:+.3f} | win%={win_rate:.0%} | "
+            f"roll(loss)={roll_loss:+.3f} | roll(win%)={roll_win:.0%} | "
+            f"vs={m2.name}"
+        )
+
+        # Log to Weights & Biases
+        wandb.log({
+            "loss":       avg_loss,
+            "win_rate":   win_rate,
+            "draw_rate":  draw_rate,
+            "roll_loss":  roll_loss,
+            "roll_win_rate": roll_win,
+            "pool_size":  len(pool),
+        }, step=group)
+
+        # 4. Checkpoint with rotation — keep MAX_CHECKPOINTS most recent files
         if group % _cfg.CHECKPOINT_INTERVAL == 0:
+            if len(checkpoint_files) >= _cfg.MAX_CHECKPOINTS:
+                oldest = checkpoint_files.pop(0)
+                if os.path.exists(oldest):
+                    os.remove(oldest)
+                    print(f"           → Removed old checkpoint: {os.path.basename(oldest)}")
             ckpt = str(_cfg.CHECKPOINT_DIR / f"m1_group_{group:04d}.keras")
             m1_wrapper.model.save(ckpt)
-            print(
-                f"[Group {group:4d}] loss={loss:.4f} | "
-                f"W/D/L={stats['wins']}/{stats['draws']}/{stats['losses']} | "
-                f"win%={win_rate:.1%} | vs={m2.name} | pool={len(pool)} | ✓ saved"
-            )
-        elif group % 10 == 0:
-            print(
-                f"[Group {group:4d}] loss={loss:.4f} | "
-                f"W/D/L={stats['wins']}/{stats['draws']}/{stats['losses']} | "
-                f"win%={win_rate:.1%} | vs={m2.name} | pool={len(pool)}"
-            )
+            checkpoint_files.append(ckpt)
+            print(f"           → Saved: {os.path.basename(ckpt)}  ({len(checkpoint_files)}/{_cfg.MAX_CHECKPOINTS} kept)")
 
         # 5. Maybe add a frozen M1 snapshot to the opponent pool
         added = pool.maybe_add_m1_copy(m1_wrapper, group)

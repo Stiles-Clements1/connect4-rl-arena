@@ -40,10 +40,13 @@ RANDOM_INIT_MOVES = 6
 GAMES_PER_GROUP = 50    # games per M2 opponent before one gradient step
 BATCH_SIZE      = 32    # triplets per gradient step — MUST stay constant (TF warning)
 GAMMA           = 0.99  # discount factor applied to terminal reward
-LEARNING_RATE   = 5e-4  # Adam optimizer learning rate
-NUM_GROUPS      = 500   # total outer training iterations (groups)
-ENTROPY_COEF    = 0.01  # weight of entropy bonus in PG loss (encourages exploration)
-GRAD_CLIP_NORM  = 1.0   # global gradient norm cap (prevents instability from reward spikes)
+LEARNING_RATE          = 5e-4  # Adam optimizer learning rate
+NUM_GROUPS             = 500   # total outer training iterations (groups)
+ENTROPY_COEF           = 0.01  # weight of entropy bonus in PG loss (encourages exploration)
+GRAD_CLIP_NORM         = 1.0   # global gradient norm cap (prevents instability from reward spikes)
+GRAD_STEP_EVERY_N_GAMES = 5    # take one gradient step per this many games (no data reuse)
+MAX_CHECKPOINTS        = 5     # max checkpoint files kept on disk; oldest deleted when exceeded
+LOG_WINDOW             = 20    # rolling average window (groups) shown in per-group print
 
 # ── Opponent pool settings ────────────────────────────────────────────────────
 POOL_CAP          = 20  # maximum pool size; originals always kept regardless

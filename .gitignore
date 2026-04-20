@@ -1,7 +1,5 @@
-Zan Group Models
-Luke Group Models
-Stiles Group Models
 claude.md
 project 3 overview - connect 4 new.pdf
-*.keras
-*.h5
+
+# Exclude only this specific model file
+Zan Group Models/final_supervised_256f.keras
