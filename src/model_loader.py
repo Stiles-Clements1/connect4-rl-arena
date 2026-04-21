@@ -20,7 +20,7 @@ Encoding reference (determined by inspecting each group's backend code):
 import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import tensorflow as tf
@@ -126,6 +126,52 @@ def predict_probs(wrapper: ModelWrapper, board: np.ndarray, player: int) -> np.n
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
+# The Zan CNN (final_supervised_256f.keras, 226 MB) exceeds GitHub's 100 MB
+# git-push limit, so it is hosted as a GitHub Release asset rather than
+# committed to the repo. Every machine (your Mac, Colab, a teammate's laptop)
+# looks in three places, in order:
+#   1. The canonical in-repo path  (Zan Group Models/final_supervised_256f.keras)
+#   2. A per-user cache            (~/.keras/connect4_rl_arena/...)
+#   3. The GitHub Release asset    (downloaded to the cache, reused thereafter)
+# The file is static for the project, so download-once-and-cache is safe.
+
+ZAN_CNN_RELEASE_URL = (
+    "https://github.com/Stiles-Clements1/connect4-rl-arena/"
+    "releases/download/models-v1/final_supervised_256f.keras"
+)
+ZAN_CNN_CACHE_DIR = Path.home() / ".keras" / "connect4_rl_arena"
+
+
+def _resolve_zan_cnn_path() -> Optional[Path]:
+    """
+    Return a local filesystem path to the Zan CNN file, or None if it cannot
+    be located or fetched. Checks, in order:
+      1. the in-repo path from config.py
+      2. a per-user cache under ~/.keras/connect4_rl_arena/
+      3. downloads from the GitHub Release to the cache
+    """
+    # 1. In-repo location (your Mac, or anyone who dropped the file in manually)
+    local = _cfg.M2_PATHS.get("zan_cnn")
+    if local is not None and local.exists():
+        return local
+
+    # 2. Per-user cache (previously downloaded on this machine)
+    ZAN_CNN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached = ZAN_CNN_CACHE_DIR / "final_supervised_256f.keras"
+    if cached.exists():
+        return cached
+
+    # 3. Download from the GitHub Release into the cache
+    try:
+        import urllib.request
+        print("  Fetching Zan CNN from the GitHub Release (one-time, ~226 MB)…")
+        urllib.request.urlretrieve(ZAN_CNN_RELEASE_URL, cached)
+        return cached
+    except Exception as exc:
+        print(f"  (could not fetch Zan CNN from {ZAN_CNN_RELEASE_URL}: {exc})")
+        return None
+
+
 def load_all_models() -> dict:
     """
     Load M1 and all initial M2 candidates.  Returns a dict mapping name → ModelWrapper.
@@ -182,16 +228,15 @@ def load_all_models() -> dict:
     )
     models["luke_transformer"] = ModelWrapper(luke_transformer, "A", "Luke Transformer")
 
-    # ── Zan CNN — Type B, standard .keras load, no custom layers ─────────────
-    # The 226 MB Zan CNN file is gitignored, so it may be missing on Colab or
-    # on a teammate's machine that hasn't downloaded it. Skip gracefully.
+    # ── Zan CNN — Type B; 226 MB file hosted on a GitHub Release ─────────────
     print("Loading Zan models…")
-    zan_cnn_path = _cfg.M2_PATHS.get("zan_cnn")
-    if zan_cnn_path is not None and zan_cnn_path.exists():
+    zan_cnn_path = _resolve_zan_cnn_path()
+    if zan_cnn_path is not None:
         zan_cnn = tf.keras.models.load_model(str(zan_cnn_path), compile=False)
         models["zan_cnn"] = ModelWrapper(zan_cnn, "B", "Zan CNN")
+        print(f"  Zan CNN loaded from {zan_cnn_path}")
     else:
-        print("  (skipping Zan CNN — not in M2_PATHS or file missing)")
+        print("  (skipping Zan CNN — not available locally or via Release)")
 
     # ── Zan Transformer — Type B_flat, weights-only file ─────────────────────
     # The .weights.h5 file stores only weights, not the architecture.

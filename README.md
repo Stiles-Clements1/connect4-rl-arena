@@ -171,6 +171,16 @@ Each `ModelAgent` selects moves as follows: (1) if a one-move win is available, 
 
 The notebook opens with one checkbox per agent plus an N-games slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
 
+### Where the large Zan CNN comes from
+
+`final_supervised_256f.keras` is 226 MB — too large for git. `src/model_loader.py` resolves it in three places, in order:
+
+1. `Zan Group Models/final_supervised_256f.keras` in the repo (if you put it there manually).
+2. A per-user cache at `~/.keras/connect4_rl_arena/final_supervised_256f.keras`.
+3. The [GitHub Release `models-v1`](https://github.com/Stiles-Clements1/connect4-rl-arena/releases/tag/models-v1) — downloaded to the cache once, reused thereafter.
+
+So first time someone clones the repo (or opens the Colab notebook on a fresh runtime), loading the Zan CNN triggers a one-time ~30-second download. Every run after that uses the cached copy. If all three locations fail, the model is skipped with a clear message and the other five pretrained networks still load.
+
 ---
 
 ## Key hyperparameters
