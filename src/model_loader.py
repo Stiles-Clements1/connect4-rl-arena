@@ -104,16 +104,22 @@ def predict_probs(wrapper: ModelWrapper, board: np.ndarray, player: int) -> np.n
     """
     Run inference and return a (7,) float32 array of raw softmax probabilities
     over all 7 columns.  Illegal-move masking is the caller's responsibility.
-    """
-    # Add batch dimension for model.predict()
-    x = encode_board(wrapper, board, player)[np.newaxis, ...].astype(np.float32)
-    raw = wrapper.model.predict(x, verbose=0)
 
-    # Handle single-output models (shape (1,7)) vs dual-output (list [policy, value])
+    Uses the model's direct `__call__` instead of `.predict()`. For single-sample
+    inference (which is what self-play does) `.predict()` has per-call Python
+    overhead (progress bars, callbacks, graph re-tracing) that dominates the
+    actual compute — the direct call is typically 3–5x faster on CPU and
+    materially faster on GPU too.
+    """
+    # Add batch dimension
+    x = encode_board(wrapper, board, player)[np.newaxis, ...].astype(np.float32)
+    raw = wrapper.model(x, training=False)
+
+    # Handle single-output models vs dual-output (list [policy, value])
     if isinstance(raw, (list, tuple)):
-        probs = np.array(raw[0]).flatten()   # take policy head; flatten batch dim
+        probs = raw[0].numpy().flatten()     # take policy head; flatten batch dim
     else:
-        probs = np.array(raw).flatten()      # single output; flatten batch dim
+        probs = raw.numpy().flatten()        # single output; flatten batch dim
 
     return probs[:7].astype(np.float32)
 
@@ -177,11 +183,15 @@ def load_all_models() -> dict:
     models["luke_transformer"] = ModelWrapper(luke_transformer, "A", "Luke Transformer")
 
     # ── Zan CNN — Type B, standard .keras load, no custom layers ─────────────
+    # The 226 MB Zan CNN file is gitignored, so it may be missing on Colab or
+    # on a teammate's machine that hasn't downloaded it. Skip gracefully.
     print("Loading Zan models…")
-    zan_cnn = tf.keras.models.load_model(
-        str(_cfg.M2_PATHS["zan_cnn"]), compile=False
-    )
-    models["zan_cnn"] = ModelWrapper(zan_cnn, "B", "Zan CNN")
+    zan_cnn_path = _cfg.M2_PATHS.get("zan_cnn")
+    if zan_cnn_path is not None and zan_cnn_path.exists():
+        zan_cnn = tf.keras.models.load_model(str(zan_cnn_path), compile=False)
+        models["zan_cnn"] = ModelWrapper(zan_cnn, "B", "Zan CNN")
+    else:
+        print("  (skipping Zan CNN — not in M2_PATHS or file missing)")
 
     # ── Zan Transformer — Type B_flat, weights-only file ─────────────────────
     # The .weights.h5 file stores only weights, not the architecture.
