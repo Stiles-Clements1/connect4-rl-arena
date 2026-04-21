@@ -183,6 +183,24 @@ The notebook opens with one checkbox per agent plus an N-games slider. Selecting
 
 These give an absolute strength yardstick — "PG beats depth-3 minimax 60% of the time" is more meaningful than "PG beats random 95% of the time." They are also deterministic, so results are reproducible.
 
+### Persisting evaluation results
+
+After every head-to-head or round-robin, the notebook auto-saves two artifacts so nothing is lost when a Colab session ends:
+
+- **`logs/eval_<timestamp>_<tag>.json`** — raw match results (all counts, win rates, draw rates, first-player breakdowns, plus hardware + settings metadata). Re-load later with plain `json.load`.
+- **`report/figures/win_rate_matrix_<timestamp>_<tag>.png`** — heatmap of the round-robin, sized and annotated for dropping straight into the Q7 report.
+
+You can also call the helpers programmatically:
+
+```python
+from src.eval import save_results_json, save_win_rate_heatmap
+
+json_path = save_results_json(results, tag="pg_vs_baselines", metadata={"n_games": 100})
+png_path  = save_win_rate_heatmap(df, title="PG vs minimax")
+```
+
+Under Colab, remember to download these files before the runtime disconnects — they live inside `/content/connect4-rl-arena/` on the VM and disappear with the runtime otherwise. For the report, commit the PNG under `report/figures/` and reference it in `report.tex`.
+
 ### Where the large Zan CNN comes from
 
 `final_supervised_256f.keras` is 226 MB — too large for git. `src/model_loader.py` resolves it in three places, in order:

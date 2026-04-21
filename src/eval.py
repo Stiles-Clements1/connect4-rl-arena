@@ -13,9 +13,12 @@ is what we use for the Q5 comparison and for tournament model selection.
 """
 
 import itertools
+import json
 import random as _random
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 
@@ -711,3 +714,134 @@ def round_robin_to_dataframe(results: dict, names: list):
         df.loc[a, b] = r.a_win_rate
         df.loc[b, a] = r.b_win_rate
     return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Persistence helpers — save evaluation runs so results are not lost between
+# Colab sessions and can be cited / plotted / pasted in the report
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _match_to_dict(r: MatchResult) -> dict:
+    """JSON-serializable dict for a MatchResult, with derived rates pre-computed."""
+    d = asdict(r)
+    d["a_win_rate"] = r.a_win_rate
+    d["b_win_rate"] = r.b_win_rate
+    d["draw_rate"]  = r.draw_rate
+    d["avg_length"] = r.avg_length
+    return d
+
+
+def save_results_json(
+    results: Union[MatchResult, dict],
+    path: Optional[Union[str, Path]] = None,
+    tag: str = "",
+    metadata: Optional[dict] = None,
+) -> Path:
+    """
+    Save one or more MatchResult objects to a JSON file.
+
+    Parameters
+    ----------
+    results : MatchResult | dict[tuple, MatchResult]
+        Either a single match (from play_match / play_match_parallel) or
+        the full round-robin dict (from run_round_robin).
+    path : str | Path, optional
+        Output path. If None, defaults to
+        <repo>/logs/eval_<timestamp>[_<tag>].json
+    tag : str, optional
+        Short label mixed into the default filename. Example: "all_agents_100g".
+    metadata : dict, optional
+        Free-form extras stored alongside the matches (hardware, notebook run,
+        any hyperparameters that matter for the report).
+
+    Returns the path written to.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if path is None:
+        from . import config as _cfg
+        fname = f"eval_{timestamp}" + (f"_{tag}" if tag else "") + ".json"
+        path  = _cfg.LOG_DIR / fname
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Normalize into a list of match dicts
+    if isinstance(results, MatchResult):
+        matches = [_match_to_dict(results)]
+    else:
+        matches = [_match_to_dict(r) for r in results.values()]
+
+    payload = {
+        "timestamp": timestamp,
+        "n_matches": len(matches),
+        "metadata":  metadata or {},
+        "matches":   matches,
+    }
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return path
+
+
+def save_win_rate_heatmap(
+    df,
+    path: Optional[Union[str, Path]] = None,
+    title: Optional[str] = None,
+    tag: str = "",
+    figsize: tuple = (10, 8),
+) -> Path:
+    """
+    Save a round-robin win-rate DataFrame as a heatmap PNG.
+
+    Uses matplotlib only (no seaborn dependency). Cell values are the
+    row agent's win rate when playing the column agent, shown as percentages.
+    Diagonal cells are rendered neutral (agent does not play itself).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The output of round_robin_to_dataframe().
+    path : str | Path, optional
+        Output PNG path. If None, defaults to
+        <repo>/report/figures/win_rate_matrix_<timestamp>[_<tag>].png so the
+        image is ready to drop into the Q7 report.
+
+    Returns the path written to.
+    """
+    import matplotlib.pyplot as plt
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if path is None:
+        from . import config as _cfg
+        figures_dir = _cfg.ROOT / "report" / "figures"
+        fname = f"win_rate_matrix_{timestamp}" + (f"_{tag}" if tag else "") + ".png"
+        path  = figures_dir / fname
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    data_pct = (df.values * 100)
+    display  = np.where(np.isnan(data_pct), 50.0, data_pct)  # neutral for NaN diagonal
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(display, cmap="RdYlGn", vmin=0, vmax=100, aspect="auto")
+
+    ax.set_xticks(np.arange(len(df.columns)))
+    ax.set_yticks(np.arange(len(df.index)))
+    ax.set_xticklabels(df.columns, rotation=45, ha="right")
+    ax.set_yticklabels(df.index)
+
+    # Annotate every cell with the numeric win rate (or em-dash on the diagonal)
+    for i in range(len(df.index)):
+        for j in range(len(df.columns)):
+            val = df.iloc[i, j]
+            text = "-" if np.isnan(val) else f"{val * 100:.0f}%"
+            ax.text(j, i, text, ha="center", va="center", color="black", fontsize=9)
+
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Row agent win rate vs column agent (%)")
+
+    ax.set_title(title or "Round-robin win rates (row vs column)")
+    plt.tight_layout()
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
