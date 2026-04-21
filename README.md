@@ -11,6 +11,7 @@ Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
 | Q2 | Policy gradient training loop | ✓ `pg_trainer.py` |
 | Q3 | Opponent pool with M1 snapshots | ✓ `opponent_pool.py` |
 | Q4 | DQN training | — see note below |
+| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` + `evaluation.ipynb` |
 | Q7 | Written report | Skeleton at `report/` → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
 
 ---
@@ -31,10 +32,12 @@ Opti Proj 3/
 │   ├── game_engine.py                Connect-4 rules (make_move, legal_moves, etc.)
 │   ├── model_loader.py               loads all models, handles encoding conversion
 │   ├── opponent_pool.py              manages the M2 opponent pool
-│   └── pg_trainer.py                 policy gradient loop, gradient step, training
+│   ├── pg_trainer.py                 policy gradient loop, gradient step, training
+│   └── eval.py                       head-to-head + round-robin evaluation (Q5)
 │
 ├── notebooks/
-│   └── project3_pg_training.ipynb   deliverable notebook — thin, imports from src/
+│   ├── project3_pg_training.ipynb   deliverable notebook — thin, imports from src/
+│   └── evaluation.ipynb             interactive toggle UI for head-to-head / round-robin
 │
 ├── report/                           LaTeX source for the Q7 written report
 │   ├── report.tex                    skeleton; kept in sync with Overleaf
@@ -147,6 +150,26 @@ for group in 1 … NUM_GROUPS:
 ```
 
 Moves are chosen **stochastically** (sampled from the softmax distribution over legal moves) — not argmax — so the agent explores. The batch size is held constant across all gradient steps to prevent TensorFlow graph retracing.
+
+---
+
+## How evaluation works (Q5)
+
+`src/eval.py` provides a library for comparing any two (or more) agents head-to-head, and `notebooks/evaluation.ipynb` is the interactive UI that drives it.
+
+```python
+from src.eval import ModelAgent, RandomAgent, play_match, run_round_robin
+
+# Wrap a ModelWrapper as an Agent. Defaults below mirror tournament deployment.
+a = ModelAgent(m1_wrapper,          greedy=True,  use_tactics=True)
+b = ModelAgent(luke_transformer_w,  greedy=True,  use_tactics=True)
+
+result = play_match(a, b, n_games=100)   # alternates first player, reports W/L/D
+```
+
+Each `ModelAgent` selects moves as follows: (1) if a one-move win is available, play it; (2) if the opponent has a one-move winning threat, block it; (3) otherwise consult the model. The two tactical overrides only play legal moves — they reflect what any competent Connect-4 player does, and match how the agent will behave at tournament time. Turn them off with `use_tactics=False` if you want a model-only comparison for analysis.
+
+The notebook opens with one checkbox per agent plus an N-games slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
 
 ---
 
