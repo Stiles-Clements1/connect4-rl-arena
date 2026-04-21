@@ -139,7 +139,11 @@ ZAN_CNN_RELEASE_URL = (
     "https://github.com/Stiles-Clements1/connect4-rl-arena/"
     "releases/download/models-v1/final_supervised_256f.keras"
 )
-ZAN_CNN_CACHE_DIR = Path.home() / ".keras" / "connect4_rl_arena"
+ZAN_CNN_CACHE_DIR      = Path.home() / ".keras" / "connect4_rl_arena"
+# The real file is ~226 MB. Anything dramatically smaller is a truncated
+# download (interrupted network, Ctrl+C mid-fetch, etc.) and Keras will
+# fail to open it. Validate on every run so a bad cache self-heals.
+ZAN_CNN_MIN_VALID_SIZE = 200 * 1024 * 1024
 
 
 def _resolve_zan_cnn_path() -> Optional[Path]:
@@ -147,27 +151,51 @@ def _resolve_zan_cnn_path() -> Optional[Path]:
     Return a local filesystem path to the Zan CNN file, or None if it cannot
     be located or fetched. Checks, in order:
       1. the in-repo path from config.py
-      2. a per-user cache under ~/.keras/connect4_rl_arena/
-      3. downloads from the GitHub Release to the cache
+      2. a per-user cache under ~/.keras/connect4_rl_arena/ — only if the
+         cached file passes a size check. Partial downloads are deleted
+         and retried instead of being silently handed to Keras.
+      3. downloads from the GitHub Release into a .partial temp path first,
+         then renames to the final path only on complete success. This
+         ensures an interrupted download can never masquerade as a valid
+         cache on the next run.
     """
     # 1. In-repo location (your Mac, or anyone who dropped the file in manually)
     local = _cfg.M2_PATHS.get("zan_cnn")
     if local is not None and local.exists():
         return local
 
-    # 2. Per-user cache (previously downloaded on this machine)
+    # 2. Per-user cache. Reject if size looks like a partial download.
     ZAN_CNN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached = ZAN_CNN_CACHE_DIR / "final_supervised_256f.keras"
     if cached.exists():
-        return cached
+        size = cached.stat().st_size
+        if size >= ZAN_CNN_MIN_VALID_SIZE:
+            return cached
+        print(f"  Cached Zan CNN at {cached} is only {size / 1024**2:.0f} MB "
+              f"(need ~{ZAN_CNN_MIN_VALID_SIZE / 1024**2:.0f}+ MB) — partial "
+              f"download, removing and re-fetching.")
+        cached.unlink()
 
-    # 3. Download from the GitHub Release into the cache
+    # 3. Download into a temp .partial path, verify size, then rename.
+    tmp = cached.with_suffix(".keras.partial")
+    if tmp.exists():
+        tmp.unlink()
     try:
         import urllib.request
         print("  Fetching Zan CNN from the GitHub Release (one-time, ~226 MB)…")
-        urllib.request.urlretrieve(ZAN_CNN_RELEASE_URL, cached)
+        urllib.request.urlretrieve(ZAN_CNN_RELEASE_URL, tmp)
+        if tmp.stat().st_size < ZAN_CNN_MIN_VALID_SIZE:
+            raise IOError(
+                f"downloaded file is only {tmp.stat().st_size / 1024**2:.0f} MB, "
+                f"expected ~226 MB — truncated response"
+            )
+        tmp.rename(cached)
         return cached
     except Exception as exc:
+        # Clean up partial / incomplete files so the next run starts fresh
+        for p in (tmp, cached):
+            if p.exists():
+                p.unlink()
         print(f"  (could not fetch Zan CNN from {ZAN_CNN_RELEASE_URL}: {exc})")
         return None
 
