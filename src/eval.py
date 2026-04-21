@@ -297,12 +297,15 @@ def run_round_robin(
     pairs = list(itertools.combinations(agents.keys(), 2))
     results = {}
 
+    # progress=True on the inner match so users see games ticking within a
+    # pair; leave=False on each match keeps the outer round-robin bar as the
+    # persistent progress indicator once the pair finishes.
     for name_a, name_b in tqdm(pairs, desc="Round-robin", leave=True):
         r = play_match(
             agents[name_a], agents[name_b],
             n_games=n_games,
             random_init_moves=random_init_moves,
-            progress=False,
+            progress=True,
         )
         results[(name_a, name_b)] = r
 
