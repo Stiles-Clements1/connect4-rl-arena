@@ -11,7 +11,7 @@ Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
 | Q2 | Policy gradient training loop | ✓ `pg_trainer.py` |
 | Q3 | Opponent pool with M1 snapshots | ✓ `opponent_pool.py` |
 | Q4 | DQN training | — see note below |
-| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` + `evaluation.ipynb` |
+| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` + [`evaluation.ipynb`](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
 | Q7 | Written report | Skeleton at `report/` → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
 
 ---
