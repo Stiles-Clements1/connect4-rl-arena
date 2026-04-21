@@ -169,7 +169,11 @@ result = play_match(a, b, n_games=100)   # alternates first player, reports W/L/
 
 Each `ModelAgent` selects moves as follows: (1) if a one-move win is available, play it; (2) if the opponent has a one-move winning threat, block it; (3) otherwise consult the model. The two tactical overrides only play legal moves — they reflect what any competent Connect-4 player does, and match how the agent will behave at tournament time. Turn them off with `use_tactics=False` if you want a model-only comparison for analysis.
 
-The notebook opens with one checkbox per agent plus an N-games slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
+The notebook opens with one checkbox per agent, an **N-games** slider, and a **random-init-moves** slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
+
+### Why you should set random-init-moves > 0
+
+Every `ModelAgent` and `MinimaxAgent` in this repo is **deterministic** by default (greedy + tactical overrides). If every game starts from the empty board, a 100-game match between two deterministic agents reduces to only two distinct games (one with each side moving first), and win rates snap to 0% / 50% / 100%. Setting the slider to 4-6 random warm-up moves per game diversifies the starting positions so every game is an independent data point and win rates become continuous (e.g. 58%, 47%, 63%). For report numbers, run with `random_init_moves >= 4`.
 
 ### Calibrated minimax baselines
 
