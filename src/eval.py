@@ -32,6 +32,33 @@ from .model_loader import ModelWrapper
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared move-selection helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _pick_column(scores: np.ndarray, legal: list, greedy: bool) -> int:
+    """
+    Pick a column in [0, 6] from a 7-element `scores` array, restricted to
+    `legal`. If `greedy`, returns `argmax` over legal columns. Otherwise
+    returns a sample from the masked, renormalized distribution; if the
+    distribution is near-zero everywhere, falls back to uniform over legal
+    columns.
+    """
+    if greedy:
+        masked = np.full(7, -np.inf, dtype=np.float32)
+        masked[legal] = scores[legal]
+        return int(np.argmax(masked))
+
+    masked = np.zeros(7, dtype=np.float32)
+    masked[legal] = scores[legal]
+    total = masked.sum()
+    if total > 1e-8:
+        masked /= total
+    else:
+        masked[legal] = 1.0 / len(legal)
+    return int(np.random.choice(7, p=masked))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Agents
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -76,23 +103,9 @@ class ModelAgent:
                 return col
 
         # 3. Model-based selection
-        legal = ge.legal_moves(board)
-        raw   = ml.predict_probs(self.wrapper, board, player)   # (7,)
-
-        if self.greedy:
-            legal_scores = np.full(7, -np.inf, dtype=np.float32)
-            legal_scores[legal] = raw[legal]
-            return int(np.argmax(legal_scores))
-
-        # Stochastic sampling (mirrors training-time behaviour)
-        masked = np.zeros(7, dtype=np.float32)
-        masked[legal] = raw[legal]
-        total = masked.sum()
-        if total <= 1e-8:
-            masked[legal] = 1.0 / len(legal)
-        else:
-            masked /= total
-        return int(np.random.choice(7, p=masked))
+        legal  = ge.legal_moves(board)
+        scores = ml.predict_probs(self.wrapper, board, player)   # (7,)
+        return _pick_column(scores, legal, self.greedy)
 
 
 class RandomAgent:
@@ -325,21 +338,9 @@ def _resolve_turn_batched(agent, indices, boards, agent_player,
         raw = (raw[0] if isinstance(raw, (list, tuple)) else raw).numpy()  # (B, 7)
 
         for k, i in enumerate(need_model):
-            legal  = ge.legal_moves(boards[i])
-            p      = agent_player[i]
-            scores = raw[k]
-            if agent.greedy:
-                masked = np.full(7, -np.inf, dtype=np.float32)
-                masked[legal] = scores[legal]
-                col = int(np.argmax(masked))
-            else:
-                m = np.zeros(7, dtype=np.float32)
-                m[legal] = scores[legal]
-                s = m.sum()
-                m = m / s if s > 1e-8 else (np.eye(1, 7, k=legal[0]).flatten())
-                if s <= 1e-8:
-                    m = np.zeros(7, dtype=np.float32); m[legal] = 1.0 / len(legal)
-                col = int(np.random.choice(7, p=m))
+            p     = agent_player[i]
+            legal = ge.legal_moves(boards[i])
+            col   = _pick_column(raw[k], legal, agent.greedy)
             _apply_move(i, col, p, boards, lengths, done, winner, next_player)
 
     elif isinstance(agent, RandomAgent):
