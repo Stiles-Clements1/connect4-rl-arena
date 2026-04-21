@@ -122,6 +122,181 @@ class RandomAgent:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MinimaxAgent — alpha-beta search over a 4-window heuristic
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A deterministic, non-neural Connect-4 agent with a tunable strength knob
+# (search depth). Useful as:
+#   - a calibrated baseline (depth=1 barely tactical, depth=3 sees short
+#     threats, depth=5 strong, depth=7+ near-optimal);
+#   - a potential tournament submission (a tuned depth-5 alpha-beta is
+#     competitive with neural-net Connect-4 agents).
+# The agent is fully deterministic for the same (board, player): ties are
+# broken by a centre-preferring column order.
+
+# Weights for 4-cell windows that sum to a board score from `player`'s view.
+# Classical values for Connect-4 heuristics.
+_MM_W_WIN_LINE   = 10_000   # four in a row (mostly unreachable at a leaf)
+_MM_W_THREE_LINE = 50       # three of player's + one empty
+_MM_W_TWO_LINE   = 5        # two of player's + two empty
+_MM_W_CENTER_COL = 3        # bonus per piece in the centre column (col 3)
+
+# Centre-out column order — tightens alpha-beta bounds earlier in the search.
+_MM_COLUMN_ORDER = [3, 2, 4, 1, 5, 0, 6]
+
+# Value safely larger than any heuristic score the position can produce.
+# Terminal outcomes are scored ±(_MM_INF + depth_remaining) so the search
+# prefers faster wins and delays losses.
+_MM_INF = 1_000_000
+
+
+def _mm_score_window(window: np.ndarray, player: int) -> int:
+    """Score a 4-cell slice from `player`'s perspective."""
+    me    = int(np.sum(window == player))
+    opp   = int(np.sum(window == -player))
+    empty = 4 - me - opp
+
+    if me == 4:
+        return _MM_W_WIN_LINE
+    if opp == 4:
+        return -_MM_W_WIN_LINE
+    if me == 3 and empty == 1:
+        return _MM_W_THREE_LINE
+    if opp == 3 and empty == 1:
+        return -_MM_W_THREE_LINE
+    if me == 2 and empty == 2:
+        return _MM_W_TWO_LINE
+    if opp == 2 and empty == 2:
+        return -_MM_W_TWO_LINE
+    return 0
+
+
+def _mm_heuristic(board: np.ndarray, player: int) -> int:
+    """
+    Static evaluation of a non-terminal position from `player`'s perspective.
+    Sums the window-score over all 4-cell horizontal, vertical, and diagonal
+    slices, plus a small bonus for owning centre-column cells.
+    """
+    score = 0
+
+    # Horizontal
+    for r in range(ge.ROWS):
+        for c in range(ge.COLS - 3):
+            score += _mm_score_window(board[r, c:c+4], player)
+    # Vertical
+    for r in range(ge.ROWS - 3):
+        for c in range(ge.COLS):
+            score += _mm_score_window(board[r:r+4, c], player)
+    # Down-right diagonals
+    for r in range(ge.ROWS - 3):
+        for c in range(ge.COLS - 3):
+            window = np.array([board[r+i, c+i] for i in range(4)])
+            score += _mm_score_window(window, player)
+    # Down-left diagonals
+    for r in range(ge.ROWS - 3):
+        for c in range(3, ge.COLS):
+            window = np.array([board[r+i, c-i] for i in range(4)])
+            score += _mm_score_window(window, player)
+
+    # Small centre-column bonus
+    score += int(np.sum(board[:, 3] == player)) * _MM_W_CENTER_COL
+    return score
+
+
+def _mm_alphabeta(
+    board: np.ndarray,
+    depth: int,
+    alpha: int,
+    beta: int,
+    maximizing_player: int,
+    current_player: int,
+):
+    """
+    Standard alpha-beta search. Returns (score_for_maximizing_player, column).
+    `depth` is the remaining depth; `current_player` is who moves next.
+    """
+    done, winner = ge.is_terminal(board)
+    if done:
+        if winner == maximizing_player:
+            return _MM_INF + depth, None
+        if winner == -maximizing_player:
+            return -_MM_INF - depth, None
+        return 0, None
+
+    if depth == 0:
+        return _mm_heuristic(board, maximizing_player), None
+
+    legal         = ge.legal_moves(board)
+    legal_ordered = [c for c in _MM_COLUMN_ORDER if c in legal]
+    best_col      = legal_ordered[0]
+
+    if current_player == maximizing_player:
+        value = -_MM_INF
+        for col in legal_ordered:
+            child = ge.make_move(board, col, current_player)
+            score, _ = _mm_alphabeta(
+                child, depth - 1, alpha, beta,
+                maximizing_player, -current_player,
+            )
+            if score > value:
+                value, best_col = score, col
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                break
+        return value, best_col
+
+    value = _MM_INF
+    for col in legal_ordered:
+        child = ge.make_move(board, col, current_player)
+        score, _ = _mm_alphabeta(
+            child, depth - 1, alpha, beta,
+            maximizing_player, -current_player,
+        )
+        if score < value:
+            value, best_col = score, col
+        beta = min(beta, value)
+        if alpha >= beta:
+            break
+    return value, best_col
+
+
+class MinimaxAgent:
+    """
+    Deterministic alpha-beta minimax Connect-4 agent with a configurable
+    search depth. Slots into play_match / play_match_parallel / run_round_robin
+    the same way ModelAgent and RandomAgent do.
+
+    Depth recommendations:
+      - depth=1   barely tactical (one-move lookahead only)
+      - depth=3   sees 2-3 ply threats; beats random easily
+      - depth=5   strong; beats most humans
+      - depth=7+  near-optimal, but hundreds of ms per move on CPU
+
+    Tactical overrides (immediate-win / immediate-block) are NOT applied
+    separately — the search already sees those at depth 1 and deeper.
+    """
+
+    def __init__(self, depth: int, name: Optional[str] = None):
+        if depth < 1:
+            raise ValueError(f"depth must be >= 1, got {depth}")
+        self.depth = depth
+        self.name  = name if name is not None else f"minimax_d{depth}"
+
+    def select_move(self, board: np.ndarray, player: int) -> int:
+        _, col = _mm_alphabeta(
+            board, self.depth,
+            alpha=-_MM_INF, beta=_MM_INF,
+            maximizing_player=player,
+            current_player=player,
+        )
+        if col is None:
+            # Non-terminal boards always yield a move; this is a pure safety
+            # net for a bug or a fully-full board reaching the search.
+            return ge.legal_moves(board)[0]
+        return col
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Match result container
 # ─────────────────────────────────────────────────────────────────────────────
 

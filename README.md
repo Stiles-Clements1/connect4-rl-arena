@@ -11,7 +11,7 @@ Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
 | Q2 | Policy gradient training loop | ✓ `pg_trainer.py` |
 | Q3 | Opponent pool with M1 snapshots | ✓ `opponent_pool.py` |
 | Q4 | DQN training | — see note below |
-| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` + [`evaluation.ipynb`](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
+| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` (incl. `MinimaxAgent`) + [`evaluation.ipynb`](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
 | Q7 | Written report | Skeleton at `report/` → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
 
 ---
@@ -170,6 +170,18 @@ result = play_match(a, b, n_games=100)   # alternates first player, reports W/L/
 Each `ModelAgent` selects moves as follows: (1) if a one-move win is available, play it; (2) if the opponent has a one-move winning threat, block it; (3) otherwise consult the model. The two tactical overrides only play legal moves — they reflect what any competent Connect-4 player does, and match how the agent will behave at tournament time. Turn them off with `use_tactics=False` if you want a model-only comparison for analysis.
 
 The notebook opens with one checkbox per agent plus an N-games slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
+
+### Calibrated minimax baselines
+
+`eval.py` also ships a `MinimaxAgent(depth=N)` — alpha-beta search over a 4-window heuristic with centre-out move ordering. Three depths are pre-built in the notebook and appear as their own checkboxes:
+
+| Agent | Strength |
+|---|---|
+| `minimax_d1` | Barely tactical (one-move lookahead only). A notch above random. |
+| `minimax_d3` | Sees 2–3 ply threats. Beats random easily; beats weak networks. |
+| `minimax_d5` | Strong. Beats most humans. Good calibration anchor for the report. |
+
+These give an absolute strength yardstick — "PG beats depth-3 minimax 60% of the time" is more meaningful than "PG beats random 95% of the time." They are also deterministic, so results are reproducible.
 
 ### Where the large Zan CNN comes from
 
