@@ -1,4 +1,26 @@
+# ── Large model files hosted on GitHub Releases ───────────────────────────────
+# Zan CNN is ~226 MB (exceeds the 100 MB push limit). model_loader.py
+# downloads it from the Release on first use.
+Zan Group Models/final_supervised_256f.keras
+
+# ── Reference PDF (provided by course staff; not a code artifact) ────────────
 project 3 overview - connect 4 new.pdf
 
-# Exclude only this specific model file
-Zan Group Models/final_supervised_256f.keras
+# ── Python bytecode and notebook metadata ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ── Experiment-tracking artifacts ────────────────────────────────────────────
+# Weights & Biases run directories — can balloon fast during long training.
+wandb/
+# Debug logs occasionally dropped by Jupyter/Cursor plugins.
+tea_debug.log
+*.log
+
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

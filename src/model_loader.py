@@ -1,8 +1,9 @@
 """
 model_loader.py — the ONLY module that knows about:
-  - file extensions (.keras vs .weights.h5)
+  - file extensions (.keras vs .h5 vs .weights.h5)
   - board encoding types (A, B, B_flat) and their perspective-flip rules
   - which custom Keras layers each group's models require
+  - where large models live (in-repo, per-user cache, GitHub Release)
 
 Everything else in the codebase calls predict_probs() or encode_board() and
 stays completely encoding-agnostic.
@@ -10,7 +11,8 @@ stays completely encoding-agnostic.
 Encoding reference (determined by inspecting each group's backend code):
   Type "B"      — (6, 7, 2) float32, two-channel, perspective-flipped.
                   ch0 = current player's pieces, ch1 = opponent's pieces.
-                  Used by: Stiles CNN, Stiles Transformer (M1), Zan CNN.
+                  Used by: Stiles CNN, Stiles Transformer (M1), Zan CNN,
+                  the trained SAC/AC/DQN models.
   Type "A"      — (6, 7, 1) float32, single signed channel.
                   +1 = current player, -1 = opponent (board negated for player -1).
                   Used by: Luke CNN, Luke Transformer.
@@ -102,25 +104,41 @@ def encode_board(wrapper: ModelWrapper, board: np.ndarray, player: int) -> np.nd
 
 def predict_probs(wrapper: ModelWrapper, board: np.ndarray, player: int) -> np.ndarray:
     """
-    Run inference and return a (7,) float32 array of raw softmax probabilities
-    over all 7 columns.  Illegal-move masking is the caller's responsibility.
+    Run inference and return a (7,) float32 array of raw softmax/Q scores
+    over all 7 columns. Illegal-move masking is the caller's responsibility.
 
     Uses the model's direct `__call__` instead of `.predict()`. For single-sample
     inference (which is what self-play does) `.predict()` has per-call Python
     overhead (progress bars, callbacks, graph re-tracing) that dominates the
     actual compute — the direct call is typically 3–5x faster on CPU and
     materially faster on GPU too.
+
+    Handles three output shapes:
+      - single output (B, 7)                    → plain policy network
+      - list/tuple [policy (B, 7), ...]         → dual-head (AC, SAC)
+      - list/tuple [..., q_values (B, 7)]       → DQN-style networks
+
+    The FIRST output whose last dim is 7 wins. This matches how SAC models
+    are built (policy first, then Q-values).
     """
     # Add batch dimension
     x = encode_board(wrapper, board, player)[np.newaxis, ...].astype(np.float32)
     raw = wrapper.model(x, training=False)
 
-    # Handle single-output models vs dual-output (list [policy, value])
+    # Unwrap list/tuple output, prefer 7-column outputs
     if isinstance(raw, (list, tuple)):
-        probs = raw[0].numpy().flatten()     # take policy head; flatten batch dim
-    else:
-        probs = raw.numpy().flatten()        # single output; flatten batch dim
+        picked = None
+        for o in raw:
+            try:
+                shape = o.shape
+                if len(shape) >= 1 and shape[-1] == 7:
+                    picked = o
+                    break
+            except Exception:
+                continue
+        raw = picked if picked is not None else raw[0]
 
+    probs = raw.numpy().flatten() if hasattr(raw, "numpy") else np.asarray(raw).flatten()
     return probs[:7].astype(np.float32)
 
 
@@ -202,7 +220,9 @@ def _resolve_zan_cnn_path() -> Optional[Path]:
 
 def load_all_models() -> dict:
     """
-    Load M1 and all initial M2 candidates.  Returns a dict mapping name → ModelWrapper.
+    Load M1 and all initial M2 candidates from the explicit paths declared
+    in config.M1_PATH / config.M2_PATHS. Returns a dict mapping name →
+    ModelWrapper.
 
     Key "m1" is the Stiles Transformer that will be trained.
     All other keys are initial M2 opponents (never removed from the pool).
@@ -284,4 +304,238 @@ def load_all_models() -> dict:
     print(f"\nLoaded {len(models)} models:")
     for name, w in models.items():
         print(f"  {name:30s}  encoding={w.encoding}  ({w.name})")
+    return models
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto-discovery: scan the whole repo for .keras / .h5 files not explicitly
+# configured. Picks up trained SAC, AC, DQN, PG snapshots without you having
+# to wire each one into config.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# File suffixes the discovery scan will consider. We look for everything a
+# Keras model might live in: the modern .keras zip format and the two
+# legacy HDF5 variants (full-model .h5 and weights-only .weights.h5).
+_DISCOVER_SUFFIXES = (".keras", ".h5")
+
+# Substrings in filename (case-insensitive) that exclude a file from
+# discovery. These are byproducts of training we don't want as opponents:
+#   - "target"   : SAC/AC target Q networks (not policy networks)
+#   - "snapshot" : in-pool self-copies from mid-training
+#   - ".partial" : interrupted downloads (resolver cleans these up too)
+_DISCOVER_EXCLUDE_PATTERNS_DEFAULT = ("target", "snapshot", ".partial")
+
+
+def _infer_encoding_from_shape(input_shape) -> Optional[str]:
+    """
+    Map a Keras input shape to one of "A", "B", "B_flat", or None.
+
+    Keras input shapes typically include a leading batch dim (None), but
+    different backends and TensorFlow versions present this differently
+    (`TensorShape([None, 6, 7, 2])`, `(None, 6, 7, 2)`, or occasionally a
+    concrete batch like `(32, 6, 7, 2)`). To be robust, we match against
+    the TRAILING dims — the last 3 (or 2 for flat) of the shape — regardless
+    of what the batch dim looks like.
+    """
+    try:
+        dims = tuple(input_shape)
+    except Exception:
+        return None
+    if not dims:
+        return None
+
+    # Compare the trailing dims against each known encoding's shape.
+    last3 = dims[-3:] if len(dims) >= 3 else None
+    last2 = dims[-2:] if len(dims) >= 2 else None
+
+    if last3 == (6, 7, 2):
+        return "B"
+    if last3 == (6, 7, 1):
+        return "A"
+    if last2 == (6, 7):        # rare: single channel omitted
+        return "A"
+    if last2 == (42, 2):
+        return "B_flat"
+    return None
+
+
+def _try_load_generic(path: Path, luke_custom: Optional[dict]) -> Optional[tf.keras.Model]:
+    """
+    Try to load a full Keras model from `path`. First attempt uses Luke's
+    custom layers (covers Luke Transformer siblings); second attempt with no
+    custom objects (covers everything else). Returns the model or None.
+    """
+    for co in (luke_custom, None):
+        try:
+            return tf.keras.models.load_model(str(path), custom_objects=co, compile=False)
+        except Exception:
+            continue
+    return None
+
+
+def discover_extra_models(
+    search_dirs: Optional[list] = None,
+    exclude_name_patterns: Optional[tuple] = None,
+    verbose: bool = True,
+) -> dict:
+    """
+    Recursively scan folders for `.keras` / `.h5` files that are NOT already
+    loaded by load_all_models(), load each, auto-detect its encoding from
+    input shape, and return a dict of {filename_stem: ModelWrapper}.
+
+    Intended for picking up trained SAC / AC / DQN / PG checkpoints without
+    having to manually wire each one into config.py. Drop a model file into
+    `RL models/`, `checkpoints/`, or any of the `*Group Models/` folders and
+    it will show up as an opponent/agent on the next notebook run.
+
+    Parameters
+    ----------
+    search_dirs : list of Path, optional
+        Directories to scan. Defaults to the entire repo root — this is by
+        design so teammates can drop a model anywhere in the repo and it
+        gets picked up. Pass a narrower list if you want to constrain.
+    exclude_name_patterns : tuple of str, optional
+        Case-insensitive substrings that exclude a file from discovery.
+        Defaults to ("target", "snapshot", ".partial").
+    verbose : bool
+        Print a line per discovered/skipped file.
+
+    Returns
+    -------
+    dict[str, ModelWrapper]
+        Keyed by filename stem (e.g. "sac_zan", "enhanced_dqn_optimized").
+        Models already registered via config.M1_PATH / config.M2_PATHS
+        are skipped to avoid duplicates.
+    """
+    root = _cfg.ROOT
+    if search_dirs is None:
+        # Scan the entire repo root by default. Subfolders git doesn't track
+        # (venvs, caches, etc.) are filtered below.
+        search_dirs = [root]
+    if exclude_name_patterns is None:
+        exclude_name_patterns = _DISCOVER_EXCLUDE_PATTERNS_DEFAULT
+
+    # Folders to skip wholesale inside the scan — paths containing any of
+    # these substrings (case-insensitive) are pruned. Keeps us out of
+    # virtualenvs, per-user caches, git metadata, notebook metadata, etc.
+    skip_dir_fragments = (
+        ".git", "__pycache__", ".ipynb_checkpoints", "wandb",
+        "venv", "env", ".venv", "node_modules",
+    )
+
+    # Resolve the paths that load_all_models handles — skip them here.
+    known_paths = set()
+    try:
+        known_paths.add(str(Path(_cfg.M1_PATH).resolve()))
+        for p in _cfg.M2_PATHS.values():
+            known_paths.add(str(Path(p).resolve()))
+    except Exception:
+        pass
+
+    # Luke's custom layers — needed to load models trained by Luke's team
+    # (AddPositionEmb, ClassToken). Import once, reuse per file.
+    luke_custom = None
+    try:
+        luke_mod = _import_from_path(
+            "luke_inference",
+            root / "Luke Group Models" / "inference.py",
+        )
+        luke_custom = {
+            "AddPositionEmb": luke_mod.AddPositionEmb,
+            "ClassToken":     luke_mod.ClassToken,
+        }
+    except Exception:
+        luke_custom = None
+
+    discovered = {}
+    if verbose:
+        print("Discovering extra model files (.keras / .h5)…")
+
+    candidates = []
+    for d in search_dirs:
+        if not Path(d).exists():
+            continue
+        for suffix in _DISCOVER_SUFFIXES:
+            for path in Path(d).rglob(f"*{suffix}"):
+                # Prune skip-dirs anywhere in the path
+                lowered = str(path).lower()
+                if any(frag in lowered for frag in skip_dir_fragments):
+                    continue
+                candidates.append(path)
+
+    # Deduplicate + stable order so logs are readable
+    candidates = sorted(set(candidates))
+
+    for path in candidates:
+        resolved = str(path.resolve())
+        if resolved in known_paths:
+            continue
+        name_l = path.name.lower()
+        if any(pat in name_l for pat in exclude_name_patterns):
+            continue
+        # .weights.h5 files are weights-only — they need architecture rebuild
+        # code that we don't have generically. Skip with a note.
+        if name_l.endswith(".weights.h5"):
+            if verbose:
+                print(f"  (skipped {path.name} — weights-only .h5 needs architecture rebuild)")
+            continue
+
+        model = _try_load_generic(path, luke_custom)
+        if model is None:
+            if verbose:
+                print(f"  (skipped {path.name} — could not load as a full Keras model)")
+            continue
+
+        # Determine encoding from input shape
+        input_shape = None
+        try:
+            input_shape = model.input.shape
+        except Exception:
+            try:
+                input_shape = model.inputs[0].shape
+            except Exception:
+                pass
+        encoding = _infer_encoding_from_shape(input_shape) if input_shape is not None else None
+        if encoding is None:
+            if verbose:
+                print(f"  (skipped {path.name} — unrecognized input shape {input_shape})")
+            continue
+
+        name = path.stem
+        # Strip the extra ".weights" suffix if someone passes a
+        # full-model .weights.h5 (rare — wouldn't normally reach here).
+        if name.endswith(".weights"):
+            name = name[: -len(".weights")]
+        if name in discovered:
+            if verbose:
+                print(f"  (skipped {path} — duplicate stem '{name}' already discovered)")
+            continue
+
+        discovered[name] = ModelWrapper(model, encoding, name)
+        if verbose:
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            print(f"  + {name:32s}  encoding={encoding}  ({rel})")
+
+    if not discovered and verbose:
+        print("  (no extra models discovered)")
+    return discovered
+
+
+def load_all_models_with_discovery(
+    search_dirs: Optional[list] = None,
+    verbose: bool = True,
+) -> dict:
+    """
+    Convenience wrapper: load_all_models() + discover_extra_models().
+    The configured group models always take precedence over discovered
+    duplicates (by stem name). Pass `search_dirs` to narrow the scan.
+    """
+    models = load_all_models()
+    extras = discover_extra_models(search_dirs=search_dirs, verbose=verbose)
+    for name, wrapper in extras.items():
+        if name not in models:
+            models[name] = wrapper
     return models

@@ -1,18 +1,20 @@
 # Project 3 — Connect-4 Reinforcement Learning
 
+Self-play reinforcement learning for Connect-4, covering the full set of
+assignment questions. Team: Stiles Clements, Luke Hartfield, Alina Hota,
+Zan Merrill.
+
 ## What is implemented
 
-This repository covers **Questions 1–3** of the assignment (policy gradient self-play).  
-Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
-
-| Question | Description | Status |
-|---|---|---|
-| Q1 | Select a pretrained network (M1) | ✓ Stiles Transformer |
-| Q2 | Policy gradient training loop | ✓ `pg_trainer.py` |
-| Q3 | Opponent pool with M1 snapshots | ✓ `opponent_pool.py` |
-| Q4 | DQN training | — see note below |
-| Q5 | Head-to-head / round-robin model comparison | ✓ `eval.py` (incl. `MinimaxAgent`) + [`evaluation.ipynb`](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
-| Q7 | Written report | Skeleton at `report/` → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
+| Question | Description | Status | Where |
+|---|---|---|---|
+| Q1 | Select a pretrained network (M1) | ✓ | Stiles Transformer (`Stiles Group Models/transformer_v2.keras`) |
+| Q2 | Policy gradient training loop | ✓ | [`src/pg_trainer.py`](src/pg_trainer.py) + [`notebooks/project3_pg_training.ipynb`](notebooks/project3_pg_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/project3_pg_training.ipynb) |
+| Q3 | Opponent pool with M1 snapshots | ✓ | [`src/opponent_pool.py`](src/opponent_pool.py) |
+| Q3+ | SAC (PG + Q-learning fused) — final submission | ✓ | [`src/sac_trainer.py`](src/sac_trainer.py) + [`notebooks/sac_training.ipynb`](notebooks/sac_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/sac_training.ipynb) |
+| Q4 | DQN training | ✓ | [`notebooks/colab_simple_dqn.ipynb`](notebooks/colab_simple_dqn.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/colab_simple_dqn.ipynb) + `RL models/enhanced_dqn_optimized.h5` |
+| Q5 | Head-to-head / round-robin comparison | ✓ | [`src/eval.py`](src/eval.py) + [`notebooks/evaluation.ipynb`](notebooks/evaluation.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
+| Q7 | Written report | In progress | [`report/report.tex`](report/report.tex) → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
 
 ---
 
@@ -22,238 +24,271 @@ Questions 4–6 (DQN, actor-critic, tournament) are still in progress.
 Opti Proj 3/
 ├── CLAUDE.md                         project-specific AI instructions
 ├── README.md                         this file
+├── .gitignore
 │
-├── Stiles Group Models/              pretrained .keras models + backend
-├── Luke Group Models/                pretrained .keras models + backend
-├── Zan Group Models/                 pretrained .h5/.keras models + backend
+├── Stiles Group Models/              pretrained .keras models + Project-1 backend code
+├── Luke Group Models/                pretrained .keras models + Project-1 backend code
+├── Zan Group Models/                 pretrained .keras/.h5 models + Project-1 backend code
+│
+├── RL models/                        ⭐  FINISHED, tournament-ready trained agents
+│   ├── README.md                     what lives here, overwrite-in-place rules
+│   ├── sac_zan.keras                 Zan's SAC submission (~80% mean win rate)
+│   └── enhanced_dqn_optimized.h5     Alina's DQN submission
 │
 ├── src/                              importable Python modules
-│   ├── config.py                     ALL hyperparameters and file paths — edit here
-│   ├── game_engine.py                Connect-4 rules (make_move, legal_moves, etc.)
-│   ├── model_loader.py               loads all models, handles encoding conversion
+│   ├── config.py                     hyperparameters + file paths (edit here)
+│   ├── game_engine.py                Connect-4 rules (make_move, legal_moves, ...)
+│   ├── model_loader.py               loads all models, handles encoding conversion,
+│   │                                 auto-discovers any .keras/.h5 in the repo
 │   ├── opponent_pool.py              manages the M2 opponent pool
-│   ├── pg_trainer.py                 policy gradient loop, gradient step, training
-│   └── eval.py                       head-to-head + round-robin evaluation (Q5)
+│   ├── pg_trainer.py                 Q2-Q3 policy gradient loop
+│   ├── sac_trainer.py                SAC trainer used for the final Zan submission
+│   └── eval.py                       head-to-head + round-robin (Q5) + MinimaxAgent
 │
 ├── notebooks/
-│   ├── project3_pg_training.ipynb   deliverable notebook — thin, imports from src/
-│   └── evaluation.ipynb             interactive toggle UI for head-to-head / round-robin
+│   ├── project3_pg_training.ipynb    Q1-Q3 baseline PG trainer
+│   ├── sac_training.ipynb            SAC trainer (final submission notebook)
+│   ├── colab_simple_dqn.ipynb        Alina's DQN trainer (Q4)
+│   └── evaluation.ipynb              interactive eval UI (Q5)
 │
-├── report/                           LaTeX source for the Q7 written report
-│   ├── report.tex                    skeleton; kept in sync with Overleaf
-│   └── figures/                      .png / .pdf figures referenced from report.tex
+├── checkpoints/                      training-time model snapshots (committed)
+│   └── sac_run/                      latest SAC run — re-running notebooks/sac_training.ipynb
+│       ├── sac_model.keras           resumes from here automatically.
+│       ├── sac_target.keras
+│       └── state.json
 │
-├── checkpoints/                      M1 snapshots saved during training
-└── logs/                             training_log.json + training_curves.png
+├── logs/
+│   ├── sac_training_notes.md         ⭐  full SAC methodology + results write-up
+│   ├── sac_training_curves.png       training plots
+│   ├── training_log.json             PG training log
+│   ├── training_curves.png           PG training plots
+│   ├── enhanced_dqn_optimized_log.json  DQN training log
+│   └── grid_search_*.{json,png}      PG hyperparameter sweep
+│
+└── report/
+    ├── report.tex                    LaTeX skeleton; kept in sync with Overleaf
+    └── figures/                      .png heatmaps referenced from report.tex
 ```
+
+### ⭐ Where to look first
+
+| What you want | Where |
+|---|---|
+| Run the final SAC model in a Colab | `notebooks/sac_training.ipynb` (click the Colab badge above) |
+| Compare agents head-to-head | `notebooks/evaluation.ipynb` (click the Colab badge) |
+| The full SAC methodology / training story | `logs/sac_training_notes.md` |
+| Pretrained + trained models | `Stiles/Luke/Zan Group Models/`, `RL models/` |
 
 ---
 
 ## Canonical board representation
 
-All game logic, the training loop, and the opponent pool use a single internal format:
+All game logic, training loops, and the opponent pool use one internal format:
 
 - **numpy array, shape (6, 7), dtype int8**
 - `+1` = red player (goes first on an empty board)
 - `-1` = yellow player
 - `0`  = empty cell
-- **Row 0 is the TOP of the board; row 5 is the BOTTOM.**  
-  A dropped piece falls to the highest-numbered empty row in its column.  
-  (This matches all three groups' backend code — verified by inspection.)
+- **Row 0 is the TOP of the board; row 5 is the BOTTOM.** A dropped piece
+  falls to the highest-numbered empty row in its column. (Matches all
+  three groups' backend code — verified by inspection.)
 
 ---
 
 ## Model encodings
 
-Each group's models were trained with one of two input encodings.  
-These are determined by reading the backend source in each group's folder.
+Each group's pretrained models were trained with one of three input encodings,
+determined by reading the backend source in each group's folder.
 
-| Group | Model file | Encoding type | Input shape |
+| Group | Model file | Encoding | Input shape |
 |---|---|---|---|
-| Stiles | `transformer_v2.keras` (M1) | **B** | `(1, 6, 7, 2)` |
-| Stiles | `cnn_v2.keras` | **B** | `(1, 6, 7, 2)` |
-| Luke | `best_cnn_model.keras` | **A** | `(1, 6, 7, 1)` |
-| Luke | `best_transformer_model.keras` | **A** | `(1, 6, 7, 1)` |
-| Zan | `final_supervised_256f.keras` | **B** | `(1, 6, 7, 2)` |
-| Zan | `transformer.weights.h5` | **B_flat** | `(1, 42, 2)` |
+| Stiles | `transformer_v2.keras` (M1) | **B** | `(6, 7, 2)` |
+| Stiles | `cnn_v2.keras` | **B** | `(6, 7, 2)` |
+| Luke | `best_cnn_model.keras` | **A** | `(6, 7, 1)` |
+| Luke | `best_transformer_model.keras` | **A** | `(6, 7, 1)` |
+| Zan | `final_supervised_256f.keras` | **B** | `(6, 7, 2)` |
+| Zan | `transformer.weights.h5` | **B_flat** | `(42, 2)` |
+| (SAC / DQN trained models) | `RL models/*.keras / *.h5` | **B** | `(6, 7, 2)` |
 
-**Type A** — single signed channel. `+1` = current player's piece, `-1` = opponent.  
-When playing as `-1`, the board is negated before encoding.
+- **Type A** — single signed channel. `+1` = current player's piece, `-1` = opponent.
+  When playing as `-1`, the board is negated before encoding.
+- **Type B** — two-channel one-hot. Channel 0 = current player's pieces,
+  channel 1 = opponent's. When playing as `-1`, the channels are swapped.
+- **Type B_flat** — same as Type B but the 6×7 board is flattened to 42 tokens
+  before stacking channels. Used only by Zan's Transformer.
 
-**Type B** — two-channel one-hot. Channel 0 = current player's pieces, channel 1 = opponent's.  
-When playing as `-1`, the channels are swapped (perspective flip).
-
-**Type B_flat** — same as Type B but the 6×7 board is flattened to 42 tokens before stacking channels. Used only by Zan's Transformer (weights-only file; architecture rebuilt from `model_wrappers.py`).
+Encoding conversion happens only inside `model_loader`, at the moment a
+model is called. Every other module stays encoding-agnostic.
 
 ---
 
 ## How `model_loader` works
 
-`src/model_loader.py` is the **only** module that knows about file extensions or encoding types. Everything else calls:
+`src/model_loader.py` is the **only** module that knows about file
+extensions or encoding types. Everything else calls:
 
 ```python
 from src import model_loader
 
-# Load all models at startup
-models = model_loader.load_all_models()
-# Returns dict: {"m1": ModelWrapper, "stiles_cnn": ModelWrapper, ...}
+# Load every configured model + auto-discover .keras/.h5 anywhere in the repo
+models = model_loader.load_all_models_with_discovery()
+# models["m1"] = Stiles transformer, models["zan_cnn"] = Zan CNN, ...
+# models["sac_zan"] = the trained SAC model (discovered from RL models/)
+# models["enhanced_dqn_optimized"] = Alina's DQN (discovered from RL models/)
 
-# Get move probabilities for any model (7-element softmax array)
+# Get move probabilities for any model (7-element array)
 probs = model_loader.predict_probs(wrapper, board, player)
-# board: canonical 6×7 numpy array
-# player: +1 or -1
 
 # Get the encoded numpy array for direct model calls (used by gradient tape)
 x = model_loader.encode_board(wrapper, board, player)
 ```
 
-`ModelWrapper` is a small dataclass: `model` (Keras), `encoding` ("A"/"B"/"B_flat"), `name` (string).
+**Auto-discovery.** Drop any `.keras` or `.h5` file into `RL models/`,
+`checkpoints/`, or any folder under the repo root, and it will show up as
+an opponent in the evaluation notebook on the next run. Files whose names
+contain `target`, `snapshot`, or `.partial` are skipped (they're training
+byproducts, not deployable agents).
 
-Special loading notes handled internally:
-- Luke Transformer needs `AddPositionEmb` and `ClassToken` as custom objects (imported from `Luke Group Models/inference.py`).
-- Zan Transformer is weights-only: `build_connect4_transformer()` is called first (from `Zan Group Models/model_wrappers.py`), then `load_weights()`.
-- The original `transformer_v2.keras` is loaded **twice**: once as M1 (for training) and once as a frozen M2 opponent.
+**Large files over the GitHub 100 MB git limit** (currently just the
+226 MB Zan CNN) are hosted as GitHub Release assets; `model_loader.py`
+auto-downloads and caches them on first use.
 
 ---
 
 ## How the opponent pool works
 
 ```python
-from src import opponent_pool
-pool = opponent_pool.OpponentPool(initial_wrappers)
+from src.opponent_pool import OpponentPool
+pool = OpponentPool(initial_wrappers)
 ```
 
-- **Seeded** with all non-M1 models plus the original frozen M1 copy (6 models total).
-- `pool.sample()` returns a uniformly random opponent for the next group.
-- `pool.maybe_add_m1_copy(m1_wrapper, group)` — every `POOL_ADD_INTERVAL` groups, clones M1's current weights into a new frozen wrapper and appends it, provided `len(pool) < POOL_CAP`.
-- **Original models are never removed**, regardless of `POOL_CAP`.
+- Seeded with all non-M1 models (originals that are never removed).
+- `pool.sample()` returns a uniformly random opponent.
+- `pool.maybe_add_m1_copy(m1_wrapper, group)` — every
+  `POOL_ADD_INTERVAL` groups, clones M1's current weights into a new
+  frozen wrapper and appends it, provided `len(pool) < POOL_CAP`.
+- **Originals are never removed**, regardless of `POOL_CAP`.
+
+The SAC trainer extends this with weighted sampling (originals weighted
+more heavily than snapshots) — see `SACConfig.pool_originals_weight`.
 
 ---
 
-## How the policy gradient training loop works
+## How training works
+
+### PG (Q1–Q3)
 
 ```
 for group in 1 … NUM_GROUPS:
     M2 = pool.sample()
     for _ in GAMES_PER_GROUP games:
-        Randomly assign M1 as +1 or -1
+        Assign M1 as +1 or -1 randomly
         Apply RANDOM_INIT_MOVES random warm-up moves (no triplets recorded)
-        While game not over:
-            Current player samples stochastically from its model's softmax
-            Record (board, player, col) for M1's turns
-        Compute G_t = r · γ^(N−1−t) for each of M1's moves
-    Sample BATCH_SIZE triplets (fixed! with replacement)
-    Normalize returns within the batch
-    One GradientTape step:  loss = −mean(G_t · log π(a_t|s_t))
+        Self-play, sampling stochastically from π
+        Record (board, player, col) for each M1 move
+        Compute G_t = r · γ^(N−1−t)
+    Take one gradient step on the batch:  L = −mean(G_t · log π(a_t|s_t))
     Checkpoint M1 every CHECKPOINT_INTERVAL groups
-    Maybe add frozen M1 copy to pool every POOL_ADD_INTERVAL groups
+    Maybe add frozen M1 snapshot to pool every POOL_ADD_INTERVAL groups
 ```
 
-Moves are chosen **stochastically** (sampled from the softmax distribution over legal moves) — not argmax — so the agent explores. The batch size is held constant across all gradient steps to prevent TensorFlow graph retracing.
+### SAC (final submission)
+
+Policy + Q + target Q, off-policy with a replay buffer and N-step Bellman
+bootstrap (n=3). Full methodology in [`logs/sac_training_notes.md`](logs/sac_training_notes.md).
+Short version:
+
+```
+for group in 1 … num_groups:
+    M2 = weighted pool sample (originals × 3, snapshots × 1)
+    Collect transitions via parallel self-play
+    Augment with horizontal mirrors, push to replay buffer
+    For updates_per_group SAC steps:
+        Sample batch, compute n-step Bellman target
+        Q-loss + policy-loss with entropy bonus
+        Polyak soft-update target network (τ = 0.005)
+    Every pool_add_interval groups: add frozen SAC snapshot to pool
+    Every checkpoint_interval groups: save checkpoint + state.json
+```
+
+### DQN (Alina, Q4)
+
+Independent trainer in `notebooks/colab_simple_dqn.ipynb`. Epsilon-greedy
+exploration, replay buffer, target network, progressive-difficulty
+opponent. Saves to `checkpoints/enhanced_dqn_optimized.h5` during training;
+the promoted final model lives at `RL models/enhanced_dqn_optimized.h5`.
 
 ---
 
-## How evaluation works (Q5)
+## How to run
 
-`src/eval.py` provides a library for comparing any two (or more) agents head-to-head, and `notebooks/evaluation.ipynb` is the interactive UI that drives it.
+**Every notebook runs on both Google Colab and locally without edits.** Cell 1
+of each notebook detects the environment automatically — on Colab it clones
+(or pulls) the repo into `/content/connect4-rl-arena`; on local it walks up
+from the notebook's CWD to find the repo root.
 
-```python
-from src.eval import ModelAgent, RandomAgent, play_match, run_round_robin
+### On Colab (recommended for training)
 
-# Wrap a ModelWrapper as an Agent. Defaults below mirror tournament deployment.
-a = ModelAgent(m1_wrapper,          greedy=True,  use_tactics=True)
-b = ModelAgent(luke_transformer_w,  greedy=True,  use_tactics=True)
+Click any of the Colab badges above. The notebook clones `main` on first
+run, installs `tqdm` + `ipywidgets`, and Cell 1 does the rest. Enable a
+GPU: Runtime → Change runtime type → GPU (T4 / A100).
 
-result = play_match(a, b, n_games=100)   # alternates first player, reports W/L/D
+### Locally (Jupyter, VS Code, Cursor)
+
+From the repo root:
+
+```
+jupyter notebook notebooks/evaluation.ipynb
 ```
 
-Each `ModelAgent` selects moves as follows: (1) if a one-move win is available, play it; (2) if the opponent has a one-move winning threat, block it; (3) otherwise consult the model. The two tactical overrides only play legal moves — they reflect what any competent Connect-4 player does, and match how the agent will behave at tournament time. Turn them off with `use_tactics=False` if you want a model-only comparison for analysis.
+or open the `.ipynb` file in VS Code / Cursor and run cells. Working
+directory doesn't matter — Cell 1 walks up to find the repo root.
 
-The notebook opens with one checkbox per agent, an **N-games** slider, and a **random-init-moves** slider. Selecting exactly **two** boxes runs a head-to-head match; selecting **three or more** runs a round-robin and prints both a win-rate matrix and an overall ranking by mean win rate across opponents.
+### Hyperparameters
 
-### Why you should set random-init-moves > 0
+- **PG:** `src/config.py` — edit once, PG notebook uses these values.
+- **SAC:** `SACConfig(...)` in Cell 5 of `notebooks/sac_training.ipynb`.
+- **DQN:** top of `notebooks/colab_simple_dqn.ipynb`.
 
-Every `ModelAgent` and `MinimaxAgent` in this repo is **deterministic** by default (greedy + tactical overrides). If every game starts from the empty board, a 100-game match between two deterministic agents reduces to only two distinct games (one with each side moving first), and win rates snap to 0% / 50% / 100%. Setting the slider to 4-6 random warm-up moves per game diversifies the starting positions so every game is an independent data point and win rates become continuous (e.g. 58%, 47%, 63%). For report numbers, run with `random_init_moves >= 4`.
+### Promoting a trained model
 
-### Calibrated minimax baselines
-
-`eval.py` also ships a `MinimaxAgent(depth=N)` — alpha-beta search over a 4-window heuristic with centre-out move ordering. Three depths are pre-built in the notebook and appear as their own checkboxes:
-
-| Agent | Strength |
-|---|---|
-| `minimax_d1` | Barely tactical (one-move lookahead only). A notch above random. |
-| `minimax_d3` | Sees 2–3 ply threats. Beats random easily; beats weak networks. |
-| `minimax_d5` | Strong. Beats most humans. Good calibration anchor for the report. |
-
-These give an absolute strength yardstick — "PG beats depth-3 minimax 60% of the time" is more meaningful than "PG beats random 95% of the time." They are also deterministic, so results are reproducible.
-
-### Persisting evaluation results
-
-After every head-to-head or round-robin, the notebook auto-saves two artifacts so nothing is lost when a Colab session ends:
-
-- **`logs/eval_<timestamp>_<tag>.json`** — raw match results (all counts, win rates, draw rates, first-player breakdowns, plus hardware + settings metadata). Re-load later with plain `json.load`.
-- **`report/figures/win_rate_matrix_<timestamp>_<tag>.png`** — heatmap of the round-robin, sized and annotated for dropping straight into the Q7 report.
-
-You can also call the helpers programmatically:
-
-```python
-from src.eval import save_results_json, save_win_rate_heatmap
-
-json_path = save_results_json(results, tag="pg_vs_baselines", metadata={"n_games": 100})
-png_path  = save_win_rate_heatmap(df, title="PG vs minimax")
-```
-
-Under Colab, remember to download these files before the runtime disconnects — they live inside `/content/connect4-rl-arena/` on the VM and disappear with the runtime otherwise. For the report, commit the PNG under `report/figures/` and reference it in `report.tex`.
-
-### Where the large Zan CNN comes from
-
-`final_supervised_256f.keras` is 226 MB — too large for git. `src/model_loader.py` resolves it in three places, in order:
-
-1. `Zan Group Models/final_supervised_256f.keras` in the repo (if you put it there manually).
-2. A per-user cache at `~/.keras/connect4_rl_arena/final_supervised_256f.keras`.
-3. The [GitHub Release `models-v1`](https://github.com/Stiles-Clements1/connect4-rl-arena/releases/tag/models-v1) — downloaded to the cache once, reused thereafter.
-
-So first time someone clones the repo (or opens the Colab notebook on a fresh runtime), loading the Zan CNN triggers a one-time ~30-second download. Every run after that uses the cached copy. If all three locations fail, the model is skipped with a clear message and the other five pretrained networks still load.
+Every training notebook has a **commented** "save finished model to
+`RL models/`" cell at the bottom with a ⚠️ warning. Uncomment it and run
+once you're happy with a run. Same-name files are overwritten, so
+re-training iteratively just updates the same `RL models/*.keras` file.
 
 ---
 
-## Key hyperparameters
+## Canonical file locations (contract with teammates)
 
-All hyperparameters live in `src/config.py`. The most important ones:
-
-| Name | Default | Description |
+| Kind | Path | Behaviour |
 |---|---|---|
-| `GAMES_PER_GROUP` | 20 | Games per M2 opponent per gradient step |
-| `BATCH_SIZE` | 32 | Triplets per gradient step — do not vary |
-| `GAMMA` | 0.99 | Discount factor for terminal reward |
-| `LEARNING_RATE` | 1e-4 | Adam learning rate |
-| `NUM_GROUPS` | 500 | Total training iterations |
-| `RANDOM_INIT_MOVES` | 4 | Warm-up moves before models take over |
-| `POOL_CAP` | 20 | Maximum opponent pool size |
-| `POOL_ADD_INTERVAL` | 50 | Groups between M1 snapshots added to pool |
-| `CHECKPOINT_INTERVAL` | 50 | Groups between M1 checkpoint saves |
+| Finished / deployable models | `RL models/` | Overwrite-in-place. Always the tournament-ready version. |
+| Training-time checkpoints | `checkpoints/` | Overwrite-in-place. Each trainer has its own subfolder (e.g. `checkpoints/sac_run/`). |
+| Training logs + plots | `logs/` | Append as new files (timestamped); never overwrite other runs. |
+| Report figures | `report/figures/` | Auto-populated by the evaluation notebook. |
 
 ---
 
-## How to run the notebook
+## Where to plug in the DQN (Q4 seam)
 
-1. Open `notebooks/project3_pg_training.ipynb` in Jupyter or VS Code.
-2. Run all cells top to bottom.
-3. Cell 3 loads all models (~30–60 s on first run).
-4. Cell 5 runs training (progress printed every 10 groups).
-5. Cell 6 plots the loss curve and win-rate curve and saves them to `logs/`.
+For teammates working on alternative DQN variants:
 
-Checkpoints are saved to `checkpoints/m1_group_XXXX.keras` automatically.
+- **`src/game_engine.py`** — `make_move`, `legal_moves`, `is_terminal`,
+  `random_moves` work for any trainer. Reusable as-is.
+- **`src/model_loader.py`** — `load_all_models()` and
+  `load_all_models_with_discovery()` return encoding-aware `ModelWrapper`
+  instances. Any DQN using a `(6, 7, 2)` two-channel input gets
+  `encoding="B"` and plugs into the eval harness without code changes.
+- **`src/opponent_pool.py`** — `OpponentPool` is trainer-agnostic.
+- **`src/config.py`** — add DQN-specific hyperparameters here.
+- **`src/eval.py`** — `ModelAgent` treats DQN Q-values exactly like
+  softmax probs under `greedy=True` (argmax of the raw 7-column output).
+  If your DQN outputs negative Q-values and you want stochastic sampling,
+  shift them positive or softmax-over-temperature before sampling.
 
----
-
-## Where to plug in the DQN (Q4)
-
-The seam is in `src/pg_trainer.py` — see the comment `# DQN trainer will go here (Q4)` at the top of `train()`. The modules you can reuse without modification:
-
-- **`game_engine.py`** — `make_move`, `legal_moves`, `is_terminal`, `random_moves` work for any trainer.
-- **`model_loader.py`** — `load_all_models()` and `predict_probs()` are encoding-agnostic; your DQN can call them the same way.
-- **`opponent_pool.py`** — `OpponentPool` works for any agent type; just construct it with the wrappers you want.
-- **`config.py`** — add DQN-specific hyperparameters (epsilon schedule, replay buffer size, target network update interval) here.
-
-The DQN model itself would likely be a new Keras model with `tanh` output (Q-values) instead of `softmax`. Load it into a `ModelWrapper` with encoding `"B"` and use `encode_board()` to convert boards before feeding it. The state variable is the board on M1's next turn (not the opponent's), consistent with the coin-game framing from class.
+The cleanest seam: write `src/dqn_trainer.py` next to `sac_trainer.py`,
+following the same `train(cfg, initial_pool_wrappers, ...)` interface, and
+add a notebook in `notebooks/` that mirrors `sac_training.ipynb`. Alina's
+`notebooks/colab_simple_dqn.ipynb` is the inline-everything version; the
+module-plus-thin-notebook pattern is optional.
