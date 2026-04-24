@@ -323,6 +323,9 @@ _DISCOVER_SUFFIXES = (".keras", ".h5")
 #   - "target"   : SAC/AC target Q networks (not policy networks)
 #   - "snapshot" : in-pool self-copies from mid-training
 #   - ".partial" : interrupted downloads (resolver cleans these up too)
+# Note: the `checkpoints/` directory is excluded at the path level by
+# skip_dir_fragments below, so training checkpoints never even reach
+# these filename checks.
 _DISCOVER_EXCLUDE_PATTERNS_DEFAULT = ("target", "snapshot", ".partial")
 
 
@@ -383,10 +386,13 @@ def discover_extra_models(
     loaded by load_all_models(), load each, auto-detect its encoding from
     input shape, and return a dict of {filename_stem: ModelWrapper}.
 
-    Intended for picking up trained SAC / AC / DQN / PG checkpoints without
-    having to manually wire each one into config.py. Drop a model file into
-    `RL models/`, `checkpoints/`, or any of the `*Group Models/` folders and
-    it will show up as an opponent/agent on the next notebook run.
+    Intended for picking up FINISHED, promoted trained models without
+    having to manually wire each one into config.py. Drop a model file
+    into `RL models/` (the canonical home for tournament-ready agents) or
+    any of the `*Group Models/` folders and it will show up as an
+    opponent on the next notebook run. The `checkpoints/` folder is
+    DELIBERATELY excluded — those are in-training snapshots, not
+    deployable agents, and should not appear in evaluation.
 
     Parameters
     ----------
@@ -417,10 +423,15 @@ def discover_extra_models(
 
     # Folders to skip wholesale inside the scan — paths containing any of
     # these substrings (case-insensitive) are pruned. Keeps us out of
-    # virtualenvs, per-user caches, git metadata, notebook metadata, etc.
+    # virtualenvs, per-user caches, git metadata, notebook metadata, and
+    # in-training checkpoint directories. Only FINISHED, promoted models
+    # (canonically in `RL models/` or the `*Group Models/` folders) should
+    # appear as evaluation opponents; mid-training snapshots under
+    # `checkpoints/` are training state, not tournament agents.
     skip_dir_fragments = (
         ".git", "__pycache__", ".ipynb_checkpoints", "wandb",
-        "venv", "env", ".venv", "node_modules",
+        "venv", ".venv", "node_modules",
+        "checkpoints",
     )
 
     # Resolve the paths that load_all_models handles — skip them here.

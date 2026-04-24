@@ -9,12 +9,17 @@ Zan Merrill.
 | Question | Description | Status | Where |
 |---|---|---|---|
 | Q1 | Select a pretrained network (M1) | ✓ | Stiles Transformer (`Stiles Group Models/transformer_v2.keras`) |
-| Q2 | Policy gradient training loop | ✓ | [`src/pg_trainer.py`](src/pg_trainer.py) + [`notebooks/project3_pg_training.ipynb`](notebooks/project3_pg_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/project3_pg_training.ipynb) |
+| Q2 | Policy gradient training loop | ✓ | [`src/pg_trainer.py`](src/pg_trainer.py) + [`notebooks/project3_pg_training.ipynb`](notebooks/project3_pg_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/re_org/notebooks/project3_pg_training.ipynb) |
 | Q3 | Opponent pool with M1 snapshots | ✓ | [`src/opponent_pool.py`](src/opponent_pool.py) |
-| Q3+ | SAC (PG + Q-learning fused) — final submission | ✓ | [`src/sac_trainer.py`](src/sac_trainer.py) + [`notebooks/sac_training.ipynb`](notebooks/sac_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/sac_training.ipynb) |
-| Q4 | DQN training | ✓ | [`notebooks/colab_simple_dqn.ipynb`](notebooks/colab_simple_dqn.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/colab_simple_dqn.ipynb) + `RL models/enhanced_dqn_optimized.h5` |
-| Q5 | Head-to-head / round-robin comparison | ✓ | [`src/eval.py`](src/eval.py) + [`notebooks/evaluation.ipynb`](notebooks/evaluation.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/main/notebooks/evaluation.ipynb) |
+| Q3+ | SAC (PG + Q-learning fused) — final submission | ✓ | [`src/sac_trainer.py`](src/sac_trainer.py) + [`notebooks/sac_training.ipynb`](notebooks/sac_training.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/re_org/notebooks/sac_training.ipynb) |
+| Q4 | DQN training | ✓ | [`notebooks/colab_simple_dqn.ipynb`](notebooks/colab_simple_dqn.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/re_org/notebooks/colab_simple_dqn.ipynb) + `RL models/enhanced_dqn_optimized.h5` |
+| Q5 | Head-to-head / round-robin comparison | ✓ | [`src/eval.py`](src/eval.py) + [`notebooks/evaluation.ipynb`](notebooks/evaluation.ipynb) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Stiles-Clements1/connect4-rl-arena/blob/re_org/notebooks/evaluation.ipynb) |
 | Q7 | Written report | In progress | [`report/report.tex`](report/report.tex) → [Overleaf](https://www.overleaf.com/1473459198wdzspxtngrsf#bdb028) |
+
+> **Colab links above currently point to the `re_org` branch** (pending merge).
+> Once `re_org` is merged into `main`, do a repo-wide `re_org` → `main`
+> find-and-replace across this file and every notebook's Cell 0 badge + Cell 1
+> `GITHUB_BRANCH` constant.
 
 ---
 
