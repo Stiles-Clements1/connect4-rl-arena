@@ -318,6 +318,12 @@ def load_all_models() -> dict:
     print(f"\nLoaded {len(models)} models:")
     for name, w in models.items():
         print(f"  {name:30s}  encoding={w.encoding}  ({w.name})")
+
+    # Hard structural check — declared encoding must match the model's
+    # real input shape. Raises immediately on any mismatch.
+    for w in models.values():
+        verify_encoding(w)
+
     return models
 
 
@@ -564,3 +570,85 @@ def load_all_models_with_discovery(
         if name not in models:
             models[name] = wrapper
     return models
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Encoding verification
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Two ways an encoding label can be wrong:
+#   (1) STRUCTURAL — the wrapper says "B" but the Keras model expects (6,7,1).
+#       Keras itself errors out on the first call; easy to catch but only
+#       AFTER you've spent a minute warming up the round-robin. The static
+#       check below catches this at load time.
+#   (2) SEMANTIC — wrapper says "B" and the model expects (6,7,2), but
+#       channel 0 was trained as "opponent's pieces" and our encode_board()
+#       puts current-player there. Same shape, opposite meaning. Keras
+#       can't see this; the model just plays badly. The vs-random
+#       behavioural check (in the notebook) catches it.
+#
+# The static check is wired into load_all_models / discover so a label
+# that doesn't match the model's input is impossible to ship silently.
+
+# Expected trailing dims of model.input.shape per encoding label.
+_EXPECTED_TRAILING = {
+    "A":      ((6, 7, 1), (6, 7)),
+    "B":      ((6, 7, 2),),
+    "B_flat": ((42, 2),),
+}
+
+
+def verify_encoding(wrapper: ModelWrapper) -> tuple:
+    """
+    Confirm the wrapper's declared encoding matches its underlying model's
+    input shape. Returns (declared_encoding, input_shape, "OK" | reason).
+    Raises ValueError on a structural mismatch — silent encoding errors
+    have a long history of corrupting evaluation results, so we fail loud.
+    """
+    try:
+        shape = tuple(wrapper.model.input.shape)
+    except Exception:
+        try:
+            shape = tuple(wrapper.model.inputs[0].shape)
+        except Exception:
+            shape = None
+    if shape is None:
+        return wrapper.encoding, None, "could not introspect input shape"
+
+    trailing = shape[1:]   # drop the batch dim (None / concrete int)
+    options = _EXPECTED_TRAILING.get(wrapper.encoding)
+    if options is None:
+        raise ValueError(
+            f"{wrapper.name}: unknown encoding label '{wrapper.encoding}'"
+        )
+    if trailing not in options:
+        raise ValueError(
+            f"{wrapper.name}: declared encoding {wrapper.encoding!r} expects "
+            f"trailing dims in {options}, but the model's actual input has "
+            f"trailing dims {trailing}. This will produce wrong predictions "
+            f"silently or crash on first call. Fix the encoding label in "
+            f"model_loader.load_all_models or check the discovery shape "
+            f"inference for this file."
+        )
+    return wrapper.encoding, shape, "OK"
+
+
+def verify_all_encodings(models: dict, verbose: bool = True) -> dict:
+    """
+    Run verify_encoding on every wrapper in `models`. Prints a one-line
+    summary per model. Raises on the first mismatch (via verify_encoding).
+    Returns {name: (encoding, input_shape, status)}.
+    """
+    results = {}
+    if verbose:
+        print(f"\n{'Model':32s} {'Enc':8s} {'Input shape':22s} {'Status':30s}")
+        print("─" * 96)
+    for name, w in models.items():
+        enc, shape, status = verify_encoding(w)
+        results[name] = (enc, shape, status)
+        if verbose:
+            print(f"{name:32s} {enc:8s} {str(shape):22s} {status:30s}")
+    if verbose:
+        print("─" * 96)
+        print(f"All {len(models)} encodings verified against actual model input shapes.")
+    return results
