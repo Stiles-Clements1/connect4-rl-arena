@@ -28,7 +28,7 @@
   \large Comparing Policy Gradient and Deep Q-Network Agents
 }
 \author{%
-  Zan Merrill \quad Stiles Clements \quad Alina Hota \quad Luke Hartfield \\[0.6em]
+  Stiles Clements \quad Alina Hota \quad Luke Hartfield \quad Zan Merrill \\[0.6em]
   \normalsize MSBA 2026 Optimization II - Project 3
 }
 \date{\today}
@@ -275,6 +275,120 @@ learning signal, each game is initialised with a small number of uniformly
 random moves before the agent takes over; those random moves are not
 inserted as transitions into $\mathcal{D}$.
 
+\subsection{Soft Actor-Critic extension}
+\label{ssec:sac}
+
+In addition to the policy gradient and Deep Q-Network agents that form
+this report's primary comparison, we implemented a Soft Actor-Critic
+agent in its discrete-action form as an
+extension. Soft Actor-Critic is a natural fusion of the two paradigms
+covered in this course: it trains a policy network $\pi_\phi(a \mid s)$
+by gradient descent on log-probabilities (the policy gradient side) and
+a state-action value network $Q_\theta(s, a)$ by temporal-difference
+bootstrapping with a slowly-updated target network (the $Q$-learning
+side). The motivation was practical: vanilla policy gradient suffered
+from high gradient variance under Connect-4's sparse $\pm 1$ reward and
+from catastrophic forgetting once $M_1$ outgrew most of the opponent
+pool, and an intermediate Actor-Critic implementation reduced the
+variance but remained on-policy and sample-inefficient.
+
+Soft Actor-Critic is off-policy: transitions are stored in a replay
+buffer $\mathcal{D}$ and reused across many gradient steps. The policy
+is regularised toward stochasticity by adding an entropy bonus to the
+Bellman backup. Concretely, the $Q$-network minimises an $n$-step soft
+temporal-difference error,
+\[
+    \mathcal{L}_Q(\theta)
+    \;=\;
+    \mathbb{E}_{(s, a, r, s', d) \,\sim\, \mathcal{D}}
+    \!\left[
+    \Bigl(
+    Q_\theta(s, a)
+    \;-\;
+    \bigl(r + \gamma^{n}(1 - d)\, V_{\theta^{-}}(s')\bigr)
+    \Bigr)^{\!2}
+    \right],
+\]
+where the soft state-value is computed from the target $Q$-network
+$Q_{\theta^{-}}$ as
+\[
+    V_{\theta^{-}}(s')
+    \;=\;
+    \sum_{a'} \pi_\phi(a' \mid s')\,
+    \Bigl[\,
+    Q_{\theta^{-}}(s', a')
+    \;-\;
+    \alpha \log \pi_\phi(a' \mid s')
+    \,\Bigr].
+\]
+The policy network is updated to minimise
+\[
+    \mathcal{L}_\pi(\phi)
+    \;=\;
+    \mathbb{E}_{s \sim \mathcal{D}}
+    \!\left[
+    \sum_{a} \pi_\phi(a \mid s)
+    \Bigl(
+    \alpha \log \pi_\phi(a \mid s)
+    \;-\;
+    Q_\theta(s, a)
+    \Bigr)
+    \right].
+\]
+Compared to the standard Bellman backup of Section~\ref{ssec:dqn}, the
+$\max$ over actions has been replaced by a soft maximum that includes
+an entropy bonus $-\alpha \log \pi_\phi(a \mid s)$. The temperature
+$\alpha$ controls how strongly the policy is pushed toward
+stochasticity: as $\alpha \to 0$ the backup recovers the hard $\max$ of
+standard $Q$-learning, and as $\alpha \to \infty$ the policy collapses
+toward uniform. The target network is updated by Polyak averaging
+$\theta^{-} \leftarrow \tau\,\theta + (1 - \tau)\,\theta^{-}$ with a
+small mixing coefficient $\tau$, so the bootstrap target drifts slowly
+and does not chase its own tail.
+
+Three project-specific choices proved important. First, the policy
+network was warm-started from the supervised Zan convolutional network
+rather than from random initialisation: its seven-column softmax head
+was preserved, the $Q$-head was randomly initialised, and the two
+heads share a trunk. This started training near a $\sim\!75\%$
+supervised baseline rather than at chance. Second, the
+temporal-difference target uses an $n$-step return with $n = 3$, which
+propagates credit faster than one-step TD without incurring the
+variance of full Monte-Carlo returns. Third, every transition added to
+the replay buffer is also added in horizontally-mirrored form,
+exploiting Connect-4's reflection symmetry to roughly double the
+effective sample size at negligible compute cost. A small reward-shaping
+signal proportional to the change in net open-three threats was added
+at each step with coefficient $0.03$, kept weak enough that it could
+not overwhelm the terminal $\pm 1$ outcome.
+
+Final hyperparameters are listed in Table~\ref{tab:sac_hparams}. The
+two most sensitive were the entropy temperature $\alpha$ and the
+bootstrap horizon $n$: $\alpha = 0.1$ kept the late-training policy
+too soft and capped mean win rate near $70\%$, while $\alpha = 0.03$
+allowed the policy to sharpen on strong moves while preserving
+exploration.
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lrl}
+    \toprule
+    Hyperparameter                          & Value      & Notes \\
+    \midrule
+    Entropy temperature $\alpha$            & $0.03$     & balances exploration vs.\ sharpness \\
+    Bootstrap horizon $n$                   & $3$        & faster credit than 1-step, lower variance than 5 \\
+    Target update rate $\tau$               & $0.005$    & standard Soft Actor-Critic default \\
+    Replay buffer capacity                  & $50{,}000$ & approximately $1{,}000$ games of transitions \\
+    Batch size                              & $128$      & held constant across all updates \\
+    Reward shaping coefficient              & $0.03$     & per net-open-three-threat change \\
+    Originals-to-snapshots pool weight      & $3 : 1$    & prevents drift onto self-copies \\
+    Tactical-opponent probability           & $0.5$      & half of $M_2$'s games use one-ply tactics \\
+    \bottomrule
+  \end{tabular}
+  \caption{Final hyperparameters for the Soft Actor-Critic agent.}
+  \label{tab:sac_hparams}
+\end{table}
+
 \subsection{Evaluation protocol}
 \label{ssec:eval}
 
@@ -311,6 +425,52 @@ deployment we want the strongest move rather than a sample.
 % \end{figure}
 
 \subsection{Deep Q-Network training}
+
+\subsection{Soft Actor-Critic training}
+\label{ssec:sac_results}
+
+The final Soft Actor-Critic run consisted of $400$ groups of $32$
+self-play games each, with $16$ gradient updates per group. The rolling
+win rate against the training pool moved through three distinct phases.
+For roughly the first $50$ groups the replay buffer was still filling
+below its minimum threshold, so no gradient updates were applied; the
+policy played at the supervised Zan convolutional baseline of
+$\sim\!70\text{--}75\%$. From group $\sim\!50$ to $\sim\!150$ the win
+rate temporarily dipped to $55\text{--}60\%$ as the freshly-initialised
+$Q$-network trained from scratch and pulled the policy toward its
+still-unreliable estimates; the $Q$-loss decreased from approximately
+$1.0$ to $0.1$ over this phase. From group $\sim\!150$ onward the win
+rate climbed steadily to $\sim\!80\%$ and stabilised. The policy
+entropy at the end of training settled near $1.5$ nats, compared to
+$\log 7 \approx 1.95$ for a uniform policy over seven columns; the
+final agent therefore retained meaningful stochasticity rather than
+collapsing onto a single column.
+
+Final head-to-head evaluation against the shared baselines is reported
+in Table~\ref{tab:sac_eval}. Notably, the Soft Actor-Critic agent's
+mean win rate ($\sim\!80\%$) exceeded that of the supervised Zan
+convolutional network it was warm-started from ($\sim\!75\%$ on the
+same opponent set), confirming that the reinforcement-learning
+fine-tuning meaningfully refined the warm-start rather than merely
+preserving it.
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lrrr}
+    \toprule
+    Opponent                              & Win rate    & Draw rate  & Loss rate \\
+    \midrule
+    Stiles Transformer (frozen original)  & $\sim\!88\%$ & $\sim\!5\%$ & $\sim\!7\%$ \\
+    Zan convolutional baseline            & $\sim\!62\%$ & $\sim\!3\%$ & $\sim\!35\%$ \\
+    Depth-3 minimax                       & $\sim\!80\%$ & $\sim\!2\%$ & $\sim\!18\%$ \\
+    Uniformly random policy               & $\sim\!98\%$ & $\sim\!1\%$ & $\sim\!1\%$ \\
+    \midrule
+    Mean across all opponents             & $\sim\!80\%$ & ---         & --- \\
+    \bottomrule
+  \end{tabular}
+  \caption{Soft Actor-Critic evaluation: $40$ games per opponent, $4$ random initial moves per game, alternating first player.}
+  \label{tab:sac_eval}
+\end{table}
 
 \subsection{Head-to-head: policy gradient, Deep Q-Network, and minimax}
 % Results table. Use booktabs:
