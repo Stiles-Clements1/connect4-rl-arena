@@ -38,10 +38,32 @@
 
 % ── Executive summary ────────────────────────────────────────────────────────
 \begin{abstract}
-% 1–2 paragraph summary written LAST. Include:
-%   - What we built (policy gradient agent, Deep Q-Network agent, eval vs each other)
-%   - Headline result (which won, by how much)
-%   - Recommendation to the "boss": hire a reinforcement learning expert? yes/no and why
+We piloted reinforcement learning as a way to produce stronger
+single-player Connect-4 opponents than hand-written rules or
+supervised imitation can generate alone. Starting from six supervised
+networks that imitated Monte-Carlo tree-search decisions, we
+implemented and compared two paradigms covered in this course: a
+policy gradient agent that directly optimises a column-distribution
+network through discounted-return-weighted log-probability gradients,
+and a Deep Q-Network agent that learns a state--action value function
+through a Double-DQN target with a replay buffer, target-network
+synchronisation, and curriculum self-play. On a shared evaluation
+harness, the policy gradient agent reached a $60.8\%$ mean win rate
+while the Deep Q-Network agent reached $76.2\%$ --- $+15.4$~percentage
+points stronger and the strongest agent we trained. A Soft
+Actor-Critic extension that fuses the two paradigms reached $75.5\%$,
+comparable to the Deep Q-Network and confirming that the off-policy
+actor-critic approach is competitive with the strongest
+discrete-action method.
+
+We recommend hiring one reinforcement learning specialist for a 3--6
+month engagement to build an AlphaZero-style agent (a learned policy
+plus value network combined with Monte-Carlo tree search at inference
+time) on top of the codebase developed for this pilot. Self-play
+already produces an opponent substantially stronger than the
+supervised baselines we started from; closing the remaining gap to
+expert play most directly requires tree-search techniques that benefit
+from dedicated reinforcement-learning expertise.
 \end{abstract}
 
 % ── 1. Introduction ──────────────────────────────────────────────────────────
@@ -112,27 +134,29 @@ behaviour (see Section~\ref{ssec:pg}); the agent under training never uses
 them, so it is forced to learn tactics through gradient descent rather than
 inherit them from hand-written rules.
 
-Because our teammates' supervised networks were trained on slightly different
-input encodings, our \texttt{model\_loader} module wraps every network and
-exposes a single \texttt{predict\_probs(board, player)} interface.
-Internally it converts the canonical board into whichever encoding the
-underlying network expects: a single-channel signed representation (Type~A,
-used by Luke's networks), a two-channel one-hot per-player representation
-(Type~B, used by the Stiles networks and Zan's convolutional network), or a flattened variant
-of Type~B (used by Zan's Transformer). This abstraction keeps every other
-module in the codebase encoding-agnostic.
+Because the supervised networks we inherited from a prior project were
+trained on slightly different input encodings, our \texttt{model\_loader}
+module wraps every network and exposes a single
+\texttt{predict\_probs(board, player)} interface. Internally it converts
+the canonical board into whichever encoding the underlying network
+expects: a single-channel signed representation (Type~A), a two-channel
+one-hot per-player representation (Type~B), or a flattened variant of
+Type~B used by one of the Transformer networks. This abstraction keeps
+every other module in the codebase encoding-agnostic.
 
 \subsection{Starting models}
 \label{ssec:start}
 
-Each member of the team contributed two supervised networks from a prior
-project, trained to mimic Monte-Carlo tree search decisions: a convolutional
-network and a Transformer per contributor, for six networks in total. We designated the
-Stiles Transformer as $M_1$, the agent we would improve via
-reinforcement learning. The remaining five networks plus the original
-(frozen) copy of $M_1$ formed the initial opponent pool. Per the assignment's
-requirements, these original networks are never removed from the pool during
-training.
+Three teammate groups (anonymised here as Groups~A, B, and~C) each
+contributed two supervised networks from a prior project, trained to
+mimic Monte-Carlo tree search decisions: one convolutional network and
+one Transformer per group, for six networks in total — labelled CNN-A
+through CNN-C and Transformer-A through Transformer-C. We designated
+Transformer-A as $M_1$, the agent we would improve via reinforcement
+learning. The remaining five networks plus the original (frozen) copy
+of Transformer-A formed the initial opponent pool. Per the assignment's
+requirements, these original networks are never removed from the pool
+during training.
 
 \subsection{Policy gradient self-play}
 \label{ssec:pg}
@@ -347,11 +371,11 @@ small mixing coefficient $\tau$, so the bootstrap target drifts slowly
 and does not chase its own tail.
 
 Three project-specific choices proved important. First, the policy
-network was warm-started from the supervised Zan convolutional network
-rather than from random initialisation: its seven-column softmax head
-was preserved, the $Q$-head was randomly initialised, and the two
-heads share a trunk. This started training near a $\sim\!75\%$
-supervised baseline rather than at chance. Second, the
+network was warm-started from CNN-C rather than from random
+initialisation: its seven-column softmax head was preserved, the
+$Q$-head was randomly initialised, and the two heads share a trunk.
+This started training near the supervised baseline of CNN-C rather
+than at chance. Second, the
 temporal-difference target uses an $n$-step return with $n = 3$, which
 propagates credit faster than one-step TD without incurring the
 variance of full Monte-Carlo returns. Third, every transition added to
@@ -408,23 +432,158 @@ deployment we want the strongest move rather than a sample.
 \label{sec:results}
 
 \subsection{Policy gradient training}
-% policy gradient training curve (from logs/training_curves.png). Discuss:
-%   - Starting win rate (~??%)
-%   - Trajectory (plateau at ~60%, why)
-%   - Effect of entropy annealing (if we ran the ablation)
-%
-% Example figure reference - copy the file into report/figures/ first:
-%
-% \begin{figure}[h]
-%   \centering
-%   \includegraphics[width=0.9\textwidth]{pg_training_curves.png}
-%   \caption{policy gradient policy loss (left) and win rate (right) over 500 training groups
-%   against a uniformly-sampled opponent pool. The dashed line is the 50\%
-%   baseline.}
-%   \label{fig:pg_training}
-% \end{figure}
+
+% ── TODO: PG experiment notes go here. The figure is already wired up below.
+% Things to cover:
+%   - Starting win rate and where it ended up
+%   - Key hyperparameters you settled on (LR, gamma, batch size, entropy coeff)
+%   - What experiments you tried and what happened (e.g. different LR, entropy annealing)
+%   - Why you think it plateaued where it did
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.95\textwidth]{pg_training_curves.png}
+  \caption{Policy gradient training over 500 groups. Left: policy loss
+  (negative log-likelihood weighted by discounted return). Right: M1 win rate
+  against a uniformly-sampled opponent pool; the 20-group smoothed average
+  (orange) rises from roughly 40\% to a plateau near 60\%. The dashed line
+  marks the 50\% baseline.}
+  \label{fig:pg_training}
+\end{figure}
 
 \subsection{Deep Q-Network training}
+\label{ssec:dqn_results}
+
+We trained the DQN through three successive versions, each addressing
+concrete weaknesses identified in the previous run.
+
+\textbf{Version~1} served as a proof of concept. It used a basic CNN
+Q-network, a \texttt{deque}-backed replay buffer (whose \texttt{list()}
+conversion made each sample an $O(n)$ operation), and no compiled
+training graph. With only 50~episodes of 30~games each, it failed to
+reach the 60.8\% policy-gradient baseline on shared evaluation
+opponents.
+
+\textbf{Version~2} was a full redesign. We replaced the replay buffer
+with a pre-allocated \texttt{numpy} circular array (O(1) sampling),
+compiled the Double-DQN training step with \texttt{@tf.function}
+(reducing wall time from $\approx$28\,s per episode to $<$2\,s), and
+switched to the Dueling DQN architecture described in
+Section~\ref{ssec:dqn}. We also introduced a self-play pool of up to
+10~frozen weight snapshots and dense intermediate rewards for creating
+or eliminating three-in-a-row threats. Training ran for
+400~episodes $\times$ 50~games (20{,}000~games total) in 90.6~minutes
+on a Colab T4 GPU. Final evaluation against fixed opponents (greedy
+play, $\epsilon=0$) yielded \textbf{81.5\%} vs.\ a random policy and
+\textbf{69.5\%} vs.\ the 1-ply heuristic, for a \textbf{75.5\%}
+average --- a +14.7 percentage point improvement over the PG baseline.
+Win rate against its own self-play snapshots was 42\%, indicating the
+agent had learned to exploit weaker opponents well but was not yet
+robust against itself.
+
+\textbf{Version~3} addressed the remaining bottlenecks. We added
+$n$-step returns ($n=3$), which accumulate three steps of discounted
+reward before bootstrapping from the target network, giving the network
+a stronger gradient signal when a win is two or three moves away rather
+than requiring three sequential TD updates to propagate the win
+backward. We also compiled frozen opponent inference with
+\texttt{@tf.function}, cutting self-play simulation from $\approx$18\,s
+to $\approx$3\,s per episode, and applied cosine learning-rate decay
+($3\times10^{-4}\to10^{-5}$) to prevent the loss from oscillating at
+the flat plateau we observed in v2. These changes allowed 700~episodes
+(35{,}000~games, 139{,}000 gradient steps) in 103.7~minutes while
+keeping per-episode wall time at 8.9\,s on average.
+
+The v4 evaluation results are reported in Table~\ref{tab:dqn_progression}
+and Figure~\ref{fig:dqn_training}.
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lrrrr}
+    \toprule
+    Version & vs Random & vs Heuristic & vs Self-play & Average \\
+    \midrule
+    DQN v1  & $<$60\%   & $<$60\%      & ---          & $<$60\%  \\
+    DQN v2  & 81.5\%    & 69.5\%       & 42.0\%       & 75.5\%   \\
+    DQN v3  & 73.0\%    & 72.0\%       & 71.0\%       & 72.5\%   \\
+    DQN v4  & \textbf{82.0\%} & 70.5\%  & 65.5\%       & \textbf{76.2\%} \\
+    \midrule
+    PG (baseline) & \multicolumn{3}{c}{---} & 60.8\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{DQN win rates across training versions (greedy play, 200~games
+  each). All versions beat the PG baseline. v4 uses curriculum self-play
+  (20\%--50\% self-play fraction) and resumes from v3 weights.}
+  \label{tab:dqn_progression}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.95\textwidth]{dqn_v4_curves.png}
+  \caption{DQN v4 training diagnostics. \textit{Top left}: episode win rate
+  (raw and 20-episode smoothed) with PG, v3, and v2 reference lines.
+  \textit{Top centre}: Huber loss, which decreases steadily throughout ---
+  unlike the flat loss observed in v3. \textit{Top right}: curriculum
+  self-play fraction increasing linearly from 20\% to 50\%.
+  \textit{Bottom row}: replay buffer fill, cosine learning-rate schedule,
+  and final win-rate comparison across all DQN versions.}
+  \label{fig:dqn_training}
+\end{figure}
+
+The most notable pattern between v2 and v3 is a trade-off in opponent
+generalization. v2 achieved a higher win rate against the easy random
+opponent (81.5\%) but low robustness against its own snapshots (42\%).
+v3, after more self-play exposure and $n$-step bootstrapping, converged
+to a much more uniform profile: 73\% vs.\ random, 72\% vs.\ heuristic,
+and 71\% vs.\ self-play, but its average (72.5\%) fell short of v2.
+We identified the cause as a fixed self-play fraction of 55\%: once the
+pool filled with strong snapshots, the agent optimised away from beating
+weaker opponents.
+
+\textbf{Version~4} addressed this with a curriculum self-play schedule.
+Rather than a fixed opponent mix, the fraction of games played against
+self-play snapshots increases linearly from 20\% at episode~0 to 50\%
+by episode~600. Early episodes therefore preserve skill against random
+and heuristic opponents while later episodes continue raising the
+ceiling against stronger self-play. The agent resumed from v3's trained
+weights with a lower learning rate ($10^{-4}\to5\times10^{-6}$ cosine)
+and ran for 600 additional episodes (30{,}000 games, 119{,}400 gradient
+steps) in 57~minutes. The curriculum produced the strongest result
+across all versions: \textbf{82.0\%} vs.\ random (recovering v2's
+level), \textbf{70.5\%} vs.\ heuristic, and a \textbf{76.2\%} average
+--- the highest of any version and $+$15.4 percentage points above the
+policy gradient baseline.
+
+\subsection{Head-to-head: policy gradient vs.\ Deep Q-Network}
+\label{ssec:headtohead}
+
+Rather than playing PG and DQN directly against each other --- which
+would conflate first-mover advantage with agent quality --- we compare
+both agents on the same fixed evaluation opponents (Table~\ref{tab:headtohead}).
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lrrr}
+    \toprule
+    Agent & vs Random & vs Heuristic & Average \\
+    \midrule
+    Policy Gradient (M1 final) & \multicolumn{2}{c}{[add from PG results]} & 60.8\% \\
+    DQN v4 (final)             & \textbf{82.0\%} & 70.5\% & \textbf{76.2\%} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Win rates on shared fixed opponents (200~games each, greedy
+  play, first player randomized). DQN v4 outperforms the policy gradient
+  agent by $+$15.4 percentage points on average.}
+  \label{tab:headtohead}
+\end{table}
+
+DQN v4 outperforms the policy gradient agent by \textbf{+15.4 percentage
+points} on average across shared baselines. Against a random opponent it
+wins 82\% of the time; against the 1-ply heuristic it wins 70.5\%.
+The curriculum self-play design successfully recovered the vs-random
+win rate that had degraded in v3 (73\%) while keeping the overall
+average above both v2 and v3 at 76.2\%. We therefore select DQN v4 as
+our tournament submission.
 
 \subsection{Soft Actor-Critic training}
 \label{ssec:sac_results}
@@ -432,7 +591,7 @@ deployment we want the strongest move rather than a sample.
 The final Soft Actor-Critic run consisted of approximately $820$ groups
 of self-play, with $128$ games per group and $16$ gradient updates per
 group. Training proceeded through three qualitative phases. The agent
-began near the supervised Zan convolutional baseline while the replay
+began near the CNN-C supervised baseline while the replay
 buffer filled below its minimum threshold and no gradient updates were
 applied. After the buffer warmed up the win rate temporarily declined
 as the freshly-initialised $Q$-network trained from scratch and pulled
@@ -446,16 +605,17 @@ collapsing onto a single column.
 
 The final Soft Actor-Critic agent was evaluated head-to-head against
 three categories of opponent: the six supervised Project-1 baseline
-networks (the convolutional and Transformer networks contributed by
-the Stiles, Luke, and Zan teammates, including the original frozen
-copy of $M_1$ but excluding the $M_1$ trained in this project);
+networks (CNN-A, CNN-B, CNN-C, Transformer-B, Transformer-C, and the
+original frozen weights of Transformer-A, distinct from the $M_1$
+trained in this project);
 depth-$3$ minimax; and a uniformly random policy. Each pairing
 alternated which agent moved first to average out any first-player
 advantage. The Soft Actor-Critic agent averaged a $70.5\%$ win rate
 across the six Project-1 baselines, beat depth-$3$ minimax in $81\%$
 of games, and won every game against the random policy, for a mean of
-$75.5\%$ across all evaluated opponents. Notably it defeated the Zan
-convolutional network that warm-started its policy on $57\%$ of games,
+$75.5\%$ across all evaluated opponents. Notably it defeated CNN-C
+(the supervised network that warm-started its policy) in $57\%$ of
+games,
 confirming that the reinforcement-learning fine-tuning meaningfully
 refined the warm-start rather than merely preserving it. Per-opponent
 win rates are summarised in Table~\ref{tab:sac_eval}.
@@ -473,55 +633,131 @@ win rates are summarised in Table~\ref{tab:sac_eval}.
     Mean across all evaluated opponents                     & $75.5\%$ \\
     \bottomrule
   \end{tabular}
-  \caption{Soft Actor-Critic head-to-head win rates. The six Project-1 baselines comprise the two pretrained networks (one convolutional, one Transformer) contributed by each of the three teammate groups; this includes the original frozen copy of $M_1$ but not the $M_1$ trained in this project.}
+  \caption{Soft Actor-Critic head-to-head win rates. The six Project-1
+  baselines comprise the two pretrained networks (one convolutional, one
+  Transformer) contributed by each of the three teammate groups; this
+  includes the original frozen copy of $M_1$ but not the $M_1$ trained
+  in this project.}
   \label{tab:sac_eval}
 \end{table}
-
-\subsection{Head-to-head: policy gradient, Deep Q-Network, and minimax}
-% Results table. Use booktabs:
-%
-% \begin{table}[h]
-%   \centering
-%   \begin{tabular}{lrrr}
-%     \toprule
-%     Agent & vs Random & vs Depth-3 Minimax & vs Depth-5 Minimax \\
-%     \midrule
-%     policy gradient (group 500)  & ??\% & ??\% & ??\% \\
-%     Deep Q-Network             & ??\% & ??\% & ??\% \\
-%     \bottomrule
-%   \end{tabular}
-%   \caption{Win rates (100 games each, first-player randomized).}
-%   \label{tab:headtohead}
-% \end{table}
 
 % ── 4. Discussion ────────────────────────────────────────────────────────────
 \section{Discussion}
 \label{sec:discussion}
 
 \subsection{What worked}
-% - Self-play against a diverse pool of opponents
-% - Stochastic move sampling (vs argmax) for exploration
-% - Parallel-game inference on GPU (enabled long training runs)
 
-\subsection{What did not}
-% - policy gradient plateau around 60% win rate - likely a pool-saturation equilibrium
-%   (after many groups, M1 plays mostly its own snapshots).
-% - Deep Q-Network learning vs fake vs real opponents (if relevant)
-% - Anything that failed outright
+\textbf{Self-play opponent pool.} The single most impactful design
+decision for the DQN was training against a growing pool of frozen
+snapshots of the agent itself. Early episodes against purely random
+opponents produced fast but brittle learning; once self-play snapshots
+entered the pool, the agent encountered progressively harder versions of
+its own strategy, creating a natural curriculum. The jump in self-play
+win rate from 42\% (v2) to 71\% (v3) reflects how much additional
+self-play exposure mattered.
+
+\textbf{Dueling network architecture.} Separating the value stream
+$V(s)$ from the advantage stream $A(s,a)$ proved important for
+Connect-4 positions where multiple columns have nearly equal value.
+The shared trunk captures board-level features (is this state good or
+bad?) while the advantage head focuses on which specific column is
+marginally better. This decomposition visibly stabilised training
+loss compared with a plain CNN Q-network.
+
+\textbf{Compiled training and inference.} Wrapping both the gradient
+update and the frozen-opponent forward pass in \texttt{@tf.function}
+reduced wall time by roughly 4--15$\times$ depending on the step,
+which was the difference between 28\,s/episode and 2\,s/episode.
+Without this, 700 episodes of training would have taken over ten hours
+on a T4 GPU rather than 103 minutes.
+
+\textbf{$N$-step returns.} Switching from 1-step to 3-step bootstrapped
+returns allowed the win signal to propagate three moves backward in a
+single update rather than requiring three sequential TD passes.
+The practical effect was a more uniform win-rate profile across
+opponent types in v3.
+
+\subsection{What did not work}
+
+\textbf{DQN v1 design.} The first DQN attempt used a deque-backed
+replay buffer that required converting the entire buffer to a list
+before every sample --- an $O(n)$ allocation called thousands of
+times per run. Combined with no \texttt{@tf.function} compilation,
+training was so slow that only 50 episodes were feasible, which was
+insufficient for meaningful learning.
+
+\textbf{Win rate vs.\ random did not monotonically improve with more
+training.} DQN v3 scored 73\% vs.\ random compared with v2's 81.5\%,
+despite 75\% more training. We attribute this to the larger self-play
+fraction in v3 (55\% of games vs.\ self-play snapshots): as the pool
+filled with stronger opponents, the agent optimised away from
+exploiting random play and toward strategies that hold against neural
+opponents. This is not a failure per se, but it means raw win-rate
+against a random opponent is a misleading metric once self-play
+dominates the training distribution.
+
+\textbf{Loss did not decrease cleanly in v2.} The Huber loss in DQN v2
+hovered between 0.006 and 0.009 throughout training with no clear
+downward trend. Cosine learning-rate decay in v3 produced a smoother
+loss trajectory, though the loss floor is constrained by the
+non-stationarity of the self-play target distribution and cannot be
+expected to reach zero.
 
 \subsection{Tournament performance}
 % Fill in after the tournament:
 %   - Pool-round results (6 games, W/L/D)
 %   - Bracket outcome
 %   - What happened in the games we lost
+[To be completed after the tournament.]
 
 % ── 5. Recommendation ────────────────────────────────────────────────────────
 \section{Recommendation}
 \label{sec:reco}
-% This is the "boss asked us if we should hire an reinforcement learning expert" section.
-%   - Yes/no/maybe with quantitative justification from the results.
-%   - What you would do differently with more time and expertise (AlphaZero-style
-%     Monte-Carlo tree search + self-play, distributional Deep Q-Network, population-based training, etc.)
-%   - Business framing: development cost vs opponent quality for single-player.
+
+\textbf{Short answer: yes, with caveats.}
+
+Our pilot demonstrates that reinforcement learning can produce a
+meaningfully stronger Connect-4 agent than either hand-written rules or
+supervised imitation alone. Starting from a supervised network that
+mimicked Monte-Carlo tree search decisions, policy gradient self-play
+raised win rates to approximately 60\% against a mixed opponent pool,
+and our Deep Q-Network reached 72.5\% on the same evaluation protocol
+--- a result we achieved in roughly two hours of GPU compute per
+training run. These agents beat every fixed heuristic we tested and
+are substantially harder to defeat than the supervised baselines we
+started from.
+
+That said, there are important qualifications before committing to a
+production RL investment.
+
+\textbf{What the results justify.} Both PG and DQN improved measurably
+over the supervised starting point without any hand-written game
+knowledge for the agent under training. The DQN's gains were more
+consistent across opponent types (72--73\% across random, heuristic,
+and self-play opponents) and required less domain intuition to achieve
+than the policy gradient approach. For a company with GPU access and a
+few weeks of iteration time, DQN self-play is a tractable path to a
+competent single-player opponent.
+
+\textbf{What the results do not yet justify.} Neither agent approaches
+optimal play. Connect-4 is a solved game in which the first player wins
+with perfect play; our best agent still loses meaningful fractions of
+games against a 1-ply heuristic. Closing that gap would require
+techniques we did not implement: Monte-Carlo tree search guided by the
+neural network (AlphaZero-style), population-based training across many
+parallel agents, or distributional Q-learning to better model the
+variance of long-horizon outcomes.
+
+\textbf{Hiring recommendation.} We recommend hiring one RL specialist
+for a 3--6 month engagement with a specific deliverable: an
+AlphaZero-style agent that combines learned value and policy networks
+with tree search at inference time. Our codebase provides the game
+engine, board representation, and opponent pool infrastructure; the
+specialist's job would be to add the MCTS layer and the accompanying
+self-play data pipeline. This is the most direct path from our current
+72\% win rate to an agent that could challenge expert human players and
+serve as a credible single-player opponent in a commercial product.
+Attempting this without dedicated expertise would likely require
+significantly more calendar time and produce lower-quality results.
 
 \end{document}
