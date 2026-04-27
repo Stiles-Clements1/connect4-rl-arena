@@ -241,7 +241,7 @@ notebook and run all cells. To start from scratch, delete
 before running.
 
 To promote a new model as the tournament submission, copy it to
-`RL models/sac_zan.keras` — the commented "save finished model" cell
+`RL models/soft_actor_critic.keras` — the commented "save finished model" cell
 at the bottom of the training notebook does this for you.
 
 ---

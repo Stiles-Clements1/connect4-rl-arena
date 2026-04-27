@@ -8,7 +8,7 @@ you want to compare final agents — not works-in-progress.
 
 | File | Who trained it | Method | Encoding | Notes |
 |---|---|---|---|---|
-| `sac_zan.keras` | Zan | Soft Actor-Critic (Q3) | B | ~80% mean win rate vs. the baseline pool. Notes in [`logs/sac_training_notes.md`](../logs/sac_training_notes.md). |
+| `soft_actor_critic.keras` | Zan | Soft Actor-Critic (Q3) | B | ~80% mean win rate vs. the baseline pool. Notes in [`logs/sac_training_notes.md`](../logs/sac_training_notes.md). |
 | `enhanced_dqn_optimized.h5` | Alina | Enhanced DQN (Q4) | B | Training log at [`logs/enhanced_dqn_optimized_log.json`](../logs/enhanced_dqn_optimized_log.json). |
 
 Additional finished models will land here as teammates complete their
@@ -17,7 +17,7 @@ training runs (PG final, minimax-distilled, tournament submission, etc.).
 ## Rules for this folder
 
 1. **Overwrite-in-place is expected.** If you train a new and better
-   version of `sac_zan.keras`, drop it on top of the old one. Git will
+   version of `soft_actor_critic.keras`, drop it on top of the old one. Git will
    track the change; there is no need to version-bump the filename.
 2. **Only put finished models here.** Mid-training checkpoints live in
    `../checkpoints/` — those can change at any time and are not guaranteed
@@ -37,7 +37,7 @@ notebook on the next run — no code edits required.
 from src import model_loader
 models = model_loader.load_all_models_with_discovery()
 # Models in "RL models/" appear under their filename stem:
-sac_agent = models["sac_zan"]        # ModelWrapper, encoding="B"
+sac_agent = models["soft_actor_critic"]        # ModelWrapper, encoding="B"
 dqn_agent = models["enhanced_dqn_optimized"]
 ```
 

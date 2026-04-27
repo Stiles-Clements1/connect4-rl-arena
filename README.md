@@ -37,7 +37,7 @@ Opti Proj 3/
 │
 ├── RL models/                        ⭐  FINISHED, tournament-ready trained agents
 │   ├── README.md                     what lives here, overwrite-in-place rules
-│   ├── sac_zan.keras                 Zan's SAC submission (~80% mean win rate)
+│   ├── soft_actor_critic.keras                 Zan's SAC submission (~80% mean win rate)
 │   └── enhanced_dqn_optimized.h5     Alina's DQN submission
 │
 ├── src/                              importable Python modules
@@ -138,7 +138,7 @@ from src import model_loader
 # Load every configured model + auto-discover .keras/.h5 anywhere in the repo
 models = model_loader.load_all_models_with_discovery()
 # models["m1"] = Stiles transformer, models["zan_cnn"] = Zan CNN, ...
-# models["sac_zan"] = the trained SAC model (discovered from RL models/)
+# models["soft_actor_critic"] = the trained SAC model (discovered from RL models/)
 # models["enhanced_dqn_optimized"] = Alina's DQN (discovered from RL models/)
 
 # Get move probabilities for any model (7-element array)
