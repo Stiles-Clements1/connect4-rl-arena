@@ -429,7 +429,7 @@ def discover_extra_models(
     Returns
     -------
     dict[str, ModelWrapper]
-        Keyed by filename stem (e.g. "sac_zan", "enhanced_dqn_optimized").
+        Keyed by filename stem (e.g. "soft_actor_critic", "enhanced_dqn_optimized").
         Models already registered via config.M1_PATH / config.M2_PATHS
         are skipped to avoid duplicates.
     """
