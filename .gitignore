@@ -2,3 +2,7 @@ project 3 overview - connect 4 new.pdf
 
 # Exclude only this specific model file
 Zan Group Models/final_supervised_256f.keras
+
+# ── Python bytecode (auto-generated; machine/version-specific, not source) ──
+__pycache__/
+*.py[cod]
