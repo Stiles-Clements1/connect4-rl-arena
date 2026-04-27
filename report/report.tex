@@ -38,10 +38,32 @@
 
 % ── Executive summary ────────────────────────────────────────────────────────
 \begin{abstract}
-% 1–2 paragraph summary written LAST. Include:
-%   - What we built (policy gradient agent, Deep Q-Network agent, eval vs each other)
-%   - Headline result (which won, by how much)
-%   - Recommendation to the "boss": hire a reinforcement learning expert? yes/no and why
+We piloted reinforcement learning as a way to produce stronger
+single-player Connect-4 opponents than hand-written rules or
+supervised imitation can generate alone. Starting from six supervised
+networks that imitated Monte-Carlo tree-search decisions, we
+implemented and compared two paradigms covered in this course: a
+policy gradient agent that directly optimises a column-distribution
+network through discounted-return-weighted log-probability gradients,
+and a Deep Q-Network agent that learns a state--action value function
+through a Double-DQN target with a replay buffer, target-network
+synchronisation, and curriculum self-play. On a shared evaluation
+harness, the policy gradient agent reached a $60.8\%$ mean win rate
+while the Deep Q-Network agent reached $76.2\%$ --- $+15.4$~percentage
+points stronger and the strongest agent we trained. A Soft
+Actor-Critic extension that fuses the two paradigms reached $75.5\%$,
+comparable to the Deep Q-Network and confirming that the off-policy
+actor-critic approach is competitive with the strongest
+discrete-action method.
+
+We recommend hiring one reinforcement learning specialist for a 3--6
+month engagement to build an AlphaZero-style agent (a learned policy
+plus value network combined with Monte-Carlo tree search at inference
+time) on top of the codebase developed for this pilot. Self-play
+already produces an opponent substantially stronger than the
+supervised baselines we started from; closing the remaining gap to
+expert play most directly requires tree-search techniques that benefit
+from dedicated reinforcement-learning expertise.
 \end{abstract}
 
 % ── 1. Introduction ──────────────────────────────────────────────────────────
@@ -112,27 +134,29 @@ behaviour (see Section~\ref{ssec:pg}); the agent under training never uses
 them, so it is forced to learn tactics through gradient descent rather than
 inherit them from hand-written rules.
 
-Because our teammates' supervised networks were trained on slightly different
-input encodings, our \texttt{model\_loader} module wraps every network and
-exposes a single \texttt{predict\_probs(board, player)} interface.
-Internally it converts the canonical board into whichever encoding the
-underlying network expects: a single-channel signed representation (Type~A,
-used by Luke's networks), a two-channel one-hot per-player representation
-(Type~B, used by the Stiles networks and Zan's convolutional network), or a flattened variant
-of Type~B (used by Zan's Transformer). This abstraction keeps every other
-module in the codebase encoding-agnostic.
+Because the supervised networks we inherited from a prior project were
+trained on slightly different input encodings, our \texttt{model\_loader}
+module wraps every network and exposes a single
+\texttt{predict\_probs(board, player)} interface. Internally it converts
+the canonical board into whichever encoding the underlying network
+expects: a single-channel signed representation (Type~A), a two-channel
+one-hot per-player representation (Type~B), or a flattened variant of
+Type~B used by one of the Transformer networks. This abstraction keeps
+every other module in the codebase encoding-agnostic.
 
 \subsection{Starting models}
 \label{ssec:start}
 
-Each member of the team contributed two supervised networks from a prior
-project, trained to mimic Monte-Carlo tree search decisions: a convolutional
-network and a Transformer per contributor, for six networks in total. We designated the
-Stiles Transformer as $M_1$, the agent we would improve via
-reinforcement learning. The remaining five networks plus the original
-(frozen) copy of $M_1$ formed the initial opponent pool. Per the assignment's
-requirements, these original networks are never removed from the pool during
-training.
+Three teammate groups (anonymised here as Groups~A, B, and~C) each
+contributed two supervised networks from a prior project, trained to
+mimic Monte-Carlo tree search decisions: one convolutional network and
+one Transformer per group, for six networks in total — labelled CNN-A
+through CNN-C and Transformer-A through Transformer-C. We designated
+Transformer-A as $M_1$, the agent we would improve via reinforcement
+learning. The remaining five networks plus the original (frozen) copy
+of Transformer-A formed the initial opponent pool. Per the assignment's
+requirements, these original networks are never removed from the pool
+during training.
 
 \subsection{Policy gradient self-play}
 \label{ssec:pg}
@@ -347,11 +371,11 @@ small mixing coefficient $\tau$, so the bootstrap target drifts slowly
 and does not chase its own tail.
 
 Three project-specific choices proved important. First, the policy
-network was warm-started from the supervised Zan convolutional network
-rather than from random initialisation: its seven-column softmax head
-was preserved, the $Q$-head was randomly initialised, and the two
-heads share a trunk. This started training near a $\sim\!75\%$
-supervised baseline rather than at chance. Second, the
+network was warm-started from CNN-C rather than from random
+initialisation: its seven-column softmax head was preserved, the
+$Q$-head was randomly initialised, and the two heads share a trunk.
+This started training near the supervised baseline of CNN-C rather
+than at chance. Second, the
 temporal-difference target uses an $n$-step return with $n = 3$, which
 propagates credit faster than one-step TD without incurring the
 variance of full Monte-Carlo returns. Third, every transition added to
@@ -409,7 +433,7 @@ deployment we want the strongest move rather than a sample.
 
 \subsection{Policy gradient training}
 
-% ── Luke: paste your experiment notes here. The figure is already wired up below.
+% ── TODO: PG experiment notes go here. The figure is already wired up below.
 % Things to cover:
 %   - Starting win rate and where it ended up
 %   - Key hyperparameters you settled on (LR, gamma, batch size, entropy coeff)
@@ -567,7 +591,7 @@ our tournament submission.
 The final Soft Actor-Critic run consisted of approximately $820$ groups
 of self-play, with $128$ games per group and $16$ gradient updates per
 group. Training proceeded through three qualitative phases. The agent
-began near the supervised Zan convolutional baseline while the replay
+began near the CNN-C supervised baseline while the replay
 buffer filled below its minimum threshold and no gradient updates were
 applied. After the buffer warmed up the win rate temporarily declined
 as the freshly-initialised $Q$-network trained from scratch and pulled
@@ -581,16 +605,17 @@ collapsing onto a single column.
 
 The final Soft Actor-Critic agent was evaluated head-to-head against
 three categories of opponent: the six supervised Project-1 baseline
-networks (the convolutional and Transformer networks contributed by
-the Stiles, Luke, and Zan teammates, including the original frozen
-copy of $M_1$ but excluding the $M_1$ trained in this project);
+networks (CNN-A, CNN-B, CNN-C, Transformer-B, Transformer-C, and the
+original frozen weights of Transformer-A, distinct from the $M_1$
+trained in this project);
 depth-$3$ minimax; and a uniformly random policy. Each pairing
 alternated which agent moved first to average out any first-player
 advantage. The Soft Actor-Critic agent averaged a $70.5\%$ win rate
 across the six Project-1 baselines, beat depth-$3$ minimax in $81\%$
 of games, and won every game against the random policy, for a mean of
-$75.5\%$ across all evaluated opponents. Notably it defeated the Zan
-convolutional network that warm-started its policy on $57\%$ of games,
+$75.5\%$ across all evaluated opponents. Notably it defeated CNN-C
+(the supervised network that warm-started its policy) in $57\%$ of
+games,
 confirming that the reinforcement-learning fine-tuning meaningfully
 refined the warm-start rather than merely preserving it. Per-opponent
 win rates are summarised in Table~\ref{tab:sac_eval}.
