@@ -429,46 +429,51 @@ deployment we want the strongest move rather than a sample.
 \subsection{Soft Actor-Critic training}
 \label{ssec:sac_results}
 
-The final Soft Actor-Critic run consisted of $400$ groups of $32$
-self-play games each, with $16$ gradient updates per group. The rolling
-win rate against the training pool moved through three distinct phases.
-For roughly the first $50$ groups the replay buffer was still filling
-below its minimum threshold, so no gradient updates were applied; the
-policy played at the supervised Zan convolutional baseline of
-$\sim\!70\text{--}75\%$. From group $\sim\!50$ to $\sim\!150$ the win
-rate temporarily dipped to $55\text{--}60\%$ as the freshly-initialised
-$Q$-network trained from scratch and pulled the policy toward its
-still-unreliable estimates; the $Q$-loss decreased from approximately
-$1.0$ to $0.1$ over this phase. From group $\sim\!150$ onward the win
-rate climbed steadily to $\sim\!80\%$ and stabilised. The policy
-entropy at the end of training settled near $1.5$ nats, compared to
-$\log 7 \approx 1.95$ for a uniform policy over seven columns; the
+The final Soft Actor-Critic run consisted of approximately $820$ groups
+of self-play, with $128$ games per group and $16$ gradient updates per
+group. Training proceeded through three qualitative phases. The agent
+began near the supervised Zan convolutional baseline while the replay
+buffer filled below its minimum threshold and no gradient updates were
+applied. After the buffer warmed up the win rate temporarily declined
+as the freshly-initialised $Q$-network trained from scratch and pulled
+the policy toward its still-unreliable estimates; the $Q$-loss
+decreased from approximately $1.0$ to $0.1$ over this phase. Once the
+critic stabilised the win rate climbed steadily and converged. The
+policy entropy at the end of training settled near $1.5$ nats, compared
+to $\log 7 \approx 1.95$ for a uniform policy over seven columns; the
 final agent therefore retained meaningful stochasticity rather than
 collapsing onto a single column.
 
-Final head-to-head evaluation against the shared baselines is reported
-in Table~\ref{tab:sac_eval}. Notably, the Soft Actor-Critic agent's
-mean win rate ($\sim\!80\%$) exceeded that of the supervised Zan
-convolutional network it was warm-started from ($\sim\!75\%$ on the
-same opponent set), confirming that the reinforcement-learning
-fine-tuning meaningfully refined the warm-start rather than merely
-preserving it.
+The final Soft Actor-Critic agent was evaluated head-to-head against
+three categories of opponent: the six supervised Project-1 baseline
+networks (the convolutional and Transformer networks contributed by
+the Stiles, Luke, and Zan teammates, including the original frozen
+copy of $M_1$ but excluding the $M_1$ trained in this project);
+depth-$3$ minimax; and a uniformly random policy. Each pairing
+alternated which agent moved first to average out any first-player
+advantage. The Soft Actor-Critic agent averaged a $70.5\%$ win rate
+across the six Project-1 baselines, beat depth-$3$ minimax in $81\%$
+of games, and won every game against the random policy, for a mean of
+$75.5\%$ across all evaluated opponents. Notably it defeated the Zan
+convolutional network that warm-started its policy on $57\%$ of games,
+confirming that the reinforcement-learning fine-tuning meaningfully
+refined the warm-start rather than merely preserving it. Per-opponent
+win rates are summarised in Table~\ref{tab:sac_eval}.
 
 \begin{table}[h]
   \centering
-  \begin{tabular}{lrrr}
+  \begin{tabular}{lr}
     \toprule
-    Opponent                              & Win rate    & Draw rate  & Loss rate \\
+    Opponent                                                & Win rate \\
     \midrule
-    Stiles Transformer (frozen original)  & $\sim\!88\%$ & $\sim\!5\%$ & $\sim\!7\%$ \\
-    Zan convolutional baseline            & $\sim\!62\%$ & $\sim\!3\%$ & $\sim\!35\%$ \\
-    Depth-3 minimax                       & $\sim\!80\%$ & $\sim\!2\%$ & $\sim\!18\%$ \\
-    Uniformly random policy               & $\sim\!98\%$ & $\sim\!1\%$ & $\sim\!1\%$ \\
+    Project-1 supervised baselines (mean of $6$ networks)   & $70.5\%$ \\
+    Depth-$3$ minimax                                       & $81\%$   \\
+    Uniformly random policy                                 & $100\%$  \\
     \midrule
-    Mean across all opponents             & $\sim\!80\%$ & ---         & --- \\
+    Mean across all evaluated opponents                     & $75.5\%$ \\
     \bottomrule
   \end{tabular}
-  \caption{Soft Actor-Critic evaluation: $40$ games per opponent, $4$ random initial moves per game, alternating first player.}
+  \caption{Soft Actor-Critic head-to-head win rates. The six Project-1 baselines comprise the two pretrained networks (one convolutional, one Transformer) contributed by each of the three teammate groups; this includes the original frozen copy of $M_1$ but not the $M_1$ trained in this project.}
   \label{tab:sac_eval}
 \end{table}
 
