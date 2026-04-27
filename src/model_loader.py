@@ -20,6 +20,7 @@ Encoding reference (determined by inspecting each group's backend code):
                   Used by: Zan Transformer (weights-only file, flat input arch).
 """
 import importlib.util
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -28,6 +29,19 @@ import numpy as np
 import tensorflow as tf
 
 from . import config as _cfg
+
+
+# ── Silence one specific, benign Keras 3 warning ─────────────────────────────
+# Every model() call emits a UserWarning about the input "structure" because
+# we pass a positional tensor instead of {'input_layer': tensor}. The
+# behaviour is identical either way; the warning just clutters the eval
+# output once per inference call (i.e. thousands of times per round-robin).
+# We filter it narrowly by message so genuine Keras warnings still surface.
+warnings.filterwarnings(
+    "ignore",
+    message=r"The structure of `inputs` doesn't match the expected structure.*",
+    category=UserWarning,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
