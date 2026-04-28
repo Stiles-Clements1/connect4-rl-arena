@@ -56,6 +56,7 @@ class _MCTSNode:
         "board", "player", "prior",
         "children", "visits", "value_sum",
         "is_terminal", "terminal_value",
+        "virtual_loss",
     )
 
     def __init__(self, board: np.ndarray, player: int, prior: float = 0.0):
@@ -67,6 +68,11 @@ class _MCTSNode:
         self.value_sum: float = 0.0
         self.is_terminal: bool = False
         self.terminal_value: float = 0.0
+        # Virtual loss: incremented when a parallel sim has selected this node
+        # but its real result hasn't been backed up yet. PUCT treats virtual
+        # visits as if they were losses, so other simulations diverge to
+        # different paths instead of all stacking onto the same leaf.
+        self.virtual_loss: int = 0
 
     def is_expanded(self) -> bool:
         return len(self.children) > 0 or self.is_terminal
@@ -102,6 +108,19 @@ class MCTSAgent:
         - "rollout": play random moves from the leaf to terminal; return
           the outcome from the leaf's POV. Slower per simulation but works
           on policy-only networks.
+    n_parallel_sims : int
+        Number of MCTS simulations evaluated in a single batched forward
+        pass. Defaults to 8. With sequential MCTS (n_parallel_sims=1) on a
+        GPU, the per-call overhead (PCIe transfer + GPU->CPU sync to
+        read policy/Q outputs) dominates the actual compute, so even a
+        T4 won't beat CPU for batch=1 inference. Batching N leaves into
+        one forward pass amortises that overhead and gives ~5-10x
+        speedup on GPU. Selection across the N parallel paths uses
+        "virtual loss" to diversify (so they don't all pick the same
+        path); this is the standard AlphaZero approach. Setting this
+        higher than 16 is rarely useful; setting it to 1 disables
+        parallelization and gives bit-for-bit-identical-to-sequential
+        behaviour at the cost of speed.
     use_tactics : bool
         If True, take an immediate winning move or block an immediate
         opponent win before invoking MCTS. Mirrors the behaviour of
@@ -120,6 +139,7 @@ class MCTSAgent:
         n_simulations: int = 100,
         c_puct: float = 1.4,
         value_method: str = "mean_q",
+        n_parallel_sims: int = 8,
         use_tactics: bool = True,
         add_root_noise: bool = False,
         name: Optional[str] = None,
@@ -130,11 +150,16 @@ class MCTSAgent:
             )
         if n_simulations < 1:
             raise ValueError(f"n_simulations must be >= 1, got {n_simulations}")
+        if n_parallel_sims < 1:
+            raise ValueError(
+                f"n_parallel_sims must be >= 1, got {n_parallel_sims}"
+            )
 
         self.wrapper = wrapper
         self.n_simulations = n_simulations
         self.c_puct = c_puct
         self.value_method = value_method
+        self.n_parallel_sims = n_parallel_sims
         self.use_tactics = use_tactics
         self.add_root_noise = add_root_noise
         self.name = name or f"mcts_n{n_simulations}_{value_method}"
@@ -185,8 +210,15 @@ class MCTSAgent:
         root = _MCTSNode(board.copy(), player)
         self._expand_and_evaluate(root, is_root=True)
 
-        for _ in range(self.n_simulations):
-            self._simulate(root)
+        # Batched simulations. With n_parallel_sims=1 this degenerates to
+        # sequential MCTS (the standard implementation); with >1 it uses
+        # virtual loss to select multiple diverging paths and evaluates
+        # all their leaves in a single batched NN call -- the GPU win.
+        n_remaining = self.n_simulations
+        while n_remaining > 0:
+            batch = min(self.n_parallel_sims, n_remaining)
+            self._batched_simulate(root, batch)
+            n_remaining -= batch
 
         # Pick the most-visited child. Ties broken by Q value.
         if not root.children:
@@ -200,47 +232,159 @@ class MCTSAgent:
 
     # ── search ────────────────────────────────────────────────────────────────
 
-    def _simulate(self, root: _MCTSNode) -> None:
-        """One MCTS iteration: select → expand+evaluate → backup."""
-        path: list[_MCTSNode] = [root]
-        node = root
+    def _batched_simulate(self, root: _MCTSNode, batch_size: int) -> None:
+        """Run `batch_size` MCTS iterations with leaf parallelization.
 
-        # 1. Selection — walk down using PUCT until unexpanded or terminal.
-        while node.is_expanded() and not node.is_terminal:
-            _, child = self._select_child(node)
-            node = child
-            path.append(node)
+        Phase 1: select `batch_size` paths through the current tree using
+        PUCT + virtual loss (so they diverge to different leaves).
+        Phase 2: evaluate all non-terminal leaves in ONE batched forward
+        pass (the whole point of this method on GPU).
+        Phase 3: back up real values along each path; remove virtual losses.
 
-        # 2. Expansion + leaf evaluation.
-        if node.is_terminal:
-            leaf_value = node.terminal_value  # already in node.player's POV
+        With batch_size=1 this degenerates to sequential MCTS: virtual
+        loss is added then immediately removed during the same call, and
+        the search behaviour is identical to a non-batched implementation.
+        """
+        # ── Phase 1: Selection ──────────────────────────────────────────
+        # For each parallel sim, walk the tree to a leaf and apply virtual
+        # loss along the path so subsequent path selections diverge.
+        paths: list[list[_MCTSNode]] = []
+        leaves: list[_MCTSNode] = []
+        for _ in range(batch_size):
+            path: list[_MCTSNode] = [root]
+            node = root
+            while node.is_expanded() and not node.is_terminal:
+                _, child = self._select_child(node)
+                node = child
+                path.append(node)
+            for n in path:
+                n.virtual_loss += 1
+            paths.append(path)
+            leaves.append(node)
+
+        # ── Phase 2: Batched evaluation ─────────────────────────────────
+        # Terminal leaves use stored values; non-terminal leaves are
+        # evaluated together in a single forward pass.
+        leaf_values: list[float] = [0.0] * batch_size
+
+        eval_indices: list[int] = []
+        for i, leaf in enumerate(leaves):
+            if leaf.is_terminal:
+                leaf_values[i] = leaf.terminal_value
+
+        # Re-check terminal for newly-expanded leaves (the leaf might be a
+        # board state that's already a win/draw -- only matters for the very
+        # first sim of a freshly-built root, but cheap to handle uniformly).
+        for i, leaf in enumerate(leaves):
+            if leaf.is_terminal:
+                continue
+            done, winner = ge.is_terminal(leaf.board)
+            if done:
+                leaf.is_terminal = True
+                leaf.terminal_value = 0.0 if winner == 0 else -1.0
+                leaf_values[i] = leaf.terminal_value
+            else:
+                eval_indices.append(i)
+
+        if eval_indices:
+            # Stack inputs and do one batched forward pass.
+            xs = np.stack([
+                ml.encode_board(self.wrapper, leaves[i].board, leaves[i].player)
+                for i in eval_indices
+            ]).astype(np.float32)
+            if hasattr(self, "_compiled_forward"):
+                raw = self._compiled_forward(tf.constant(xs))
+            else:
+                raw = self.wrapper.model(xs, training=False)
+            policies, q_values = self._parse_batch_outputs(raw, len(eval_indices))
+
+            for batch_idx, leaf_idx in enumerate(eval_indices):
+                leaf = leaves[leaf_idx]
+                legal = ge.legal_moves(leaf.board)
+                priors = self._legal_prior(policies[batch_idx], legal)
+                # Create children (we already verified non-terminal above).
+                for c in legal:
+                    child_board = ge.make_move(leaf.board, c, leaf.player)
+                    leaf.children[c] = _MCTSNode(
+                        child_board, -leaf.player, prior=float(priors[c]),
+                    )
+                if self.value_method == "mean_q" and q_values is not None:
+                    q = q_values[batch_idx]
+                    v = float(np.sum(priors[legal] * q[legal]))
+                    leaf_values[leaf_idx] = float(np.clip(v, -1.0, 1.0))
+                else:
+                    leaf_values[leaf_idx] = self._rollout_value(leaf)
+
+        # ── Phase 3: Backup ─────────────────────────────────────────────
+        # Remove virtual losses, add real visit + value with negamax sign-flip.
+        for path, value in zip(paths, leaf_values):
+            v = value
+            for n in reversed(path):
+                n.virtual_loss -= 1
+                n.visits += 1
+                n.value_sum += v
+                v = -v
+
+    @staticmethod
+    def _parse_batch_outputs(
+        raw, batch_size: int,
+    ) -> tuple[np.ndarray, Optional[np.ndarray]]:
+        """Pull (batched_policy, batched_q_or_None) out of the network's
+        outputs. ``raw`` may be a single tensor or a list of tensors; we
+        keep only those whose trailing dim is 7 and reshape each to
+        (batch_size, 7). Following the same convention as the single-leaf
+        path: first 7-col output is the policy, second/third are Q heads
+        (taking element-wise min for SAC double-Q)."""
+        if not isinstance(raw, (list, tuple)):
+            raw = [raw]
+        seven_outs: list[np.ndarray] = []
+        for o in raw:
+            try:
+                arr = o.numpy() if hasattr(o, "numpy") else np.asarray(o)
+            except Exception:
+                continue
+            if arr.ndim >= 2 and arr.shape[-1] == 7:
+                seven_outs.append(
+                    arr.reshape(batch_size, 7).astype(np.float32)
+                )
+        if not seven_outs:
+            return (
+                np.full((batch_size, 7), 1.0 / 7, dtype=np.float32),
+                None,
+            )
+        policies = seven_outs[0]
+        if len(seven_outs) >= 3:
+            q = np.minimum(seven_outs[1], seven_outs[2])
+        elif len(seven_outs) == 2:
+            q = seven_outs[1]
         else:
-            leaf_value = self._expand_and_evaluate(node, is_root=False)
-
-        # 3. Backup. `leaf_value` is in path[-1].player's POV. Going up, the
-        # POV flips at every level.
-        v = leaf_value
-        for n in reversed(path):
-            n.visits += 1
-            n.value_sum += v
-            v = -v
+            q = None
+        return policies, q
 
     def _select_child(self, node: _MCTSNode) -> tuple[int, _MCTSNode]:
-        """PUCT child selection.
+        """PUCT child selection with virtual-loss support.
 
-        Score = -child.q_value() + c_puct · prior · √(N_parent) / (1 + N_child)
+        Score = -effective_q + c_puct · prior · √(N_parent_eff) / (1 + N_child_eff)
 
-        The negation on `child.q_value()` flips child's POV into the
-        parent's POV (which is what we are choosing for).
+        where N_*_eff = visits + virtual_loss, and effective Q treats
+        each virtual visit as if it were a loss (value_sum - virtual_loss).
+        Virtual loss biases parallel selection away from paths already
+        being explored by other in-flight simulations.
         """
-        sqrt_total = math.sqrt(max(node.visits, 1))
+        parent_eff = node.visits + node.virtual_loss
+        sqrt_total = math.sqrt(max(parent_eff, 1))
         best_score = -float("inf")
         best_pair: tuple[int, _MCTSNode] | None = None
 
         for col, child in node.children.items():
-            # Q from PARENT's POV is the negation of CHILD's recorded Q.
-            q_parent_pov = -child.q_value() if child.visits > 0 else 0.0
-            u = self.c_puct * child.prior * sqrt_total / (1 + child.visits)
+            child_eff = child.visits + child.virtual_loss
+            if child_eff > 0:
+                # Virtual loss = -1 per virtual visit (pessimistic).
+                effective_value_sum = child.value_sum - child.virtual_loss
+                q_parent_pov = -effective_value_sum / child_eff
+            else:
+                q_parent_pov = 0.0
+            u = self.c_puct * child.prior * sqrt_total / (1 + child_eff)
             score = q_parent_pov + u
             if score > best_score:
                 best_score = score
