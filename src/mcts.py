@@ -31,6 +31,7 @@ import random as _random
 from typing import Optional
 
 import numpy as np
+import tensorflow as tf
 
 from . import game_engine as ge
 from . import model_loader as ml
@@ -137,6 +138,16 @@ class MCTSAgent:
         self.use_tactics = use_tactics
         self.add_root_noise = add_root_noise
         self.name = name or f"mcts_n{n_simulations}_{value_method}"
+
+        # Pre-compile the forward pass with @tf.function so the dozens-of-
+        # thousands of calls per match share one cached TF graph instead
+        # of paying Python -> TF conversion overhead each time. On CPU
+        # this typically saves 2-3x on inference; on GPU the win is
+        # smaller but still meaningful at small batch sizes.
+        @tf.function(reduce_retracing=True)
+        def _compiled_forward(x):
+            return wrapper.model(x, training=False)
+        self._compiled_forward = _compiled_forward
 
         # Probe whether the network exposes Q heads (used by mean_q).
         # Cheap one-time forward pass on an empty board.
@@ -327,7 +338,13 @@ class MCTSAgent:
         x = ml.encode_board(self.wrapper, board, player)[np.newaxis].astype(
             np.float32,
         )
-        raw = self.wrapper.model(x, training=False)
+        # Use the compiled graph if it exists (it does after __init__);
+        # the very first probe call from __init__ goes through the raw
+        # Keras model because _compiled_forward isn't bound yet.
+        if hasattr(self, "_compiled_forward"):
+            raw = self._compiled_forward(tf.constant(x))
+        else:
+            raw = self.wrapper.model(x, training=False)
 
         if not isinstance(raw, (list, tuple)):
             raw = [raw]
