@@ -50,20 +50,25 @@ through a Double-DQN target with a replay buffer, target-network
 synchronisation, and curriculum self-play. On a shared evaluation
 harness, the policy gradient agent reached a $60.8\%$ mean win rate
 while the Deep Q-Network agent reached $76.2\%$ --- $+15.4$~percentage
-points stronger and the strongest agent we trained. A Soft
-Actor-Critic extension that fuses the two paradigms reached $75.5\%$,
-comparable to the Deep Q-Network and confirming that the off-policy
-actor-critic approach is competitive with the strongest
-discrete-action method.
+points stronger than the policy gradient agent on shared opponents.
+A Soft Actor-Critic extension that fuses the two paradigms reached
+$75.5\%$ on the same opponents but beat the Deep Q-Network in direct
+head-to-head play, $92$--$8$ over $200$ games. Soft Actor-Critic was
+therefore selected as our tournament submission. In tournament play,
+however, our agent lost decisively to opposing teams whose agents
+combined a learned policy with Monte-Carlo tree search at inference
+time --- the empirical anchor for our recommendation that follows.
 
 We recommend hiring one reinforcement learning specialist for a 3--6
 month engagement to build an AlphaZero-style agent (a learned policy
 plus value network combined with Monte-Carlo tree search at inference
 time) on top of the codebase developed for this pilot. Self-play
 already produces an opponent substantially stronger than the
-supervised baselines we started from; closing the remaining gap to
-expert play most directly requires tree-search techniques that benefit
-from dedicated reinforcement-learning expertise.
+supervised baselines we started from, but our tournament loss makes
+clear that closing the remaining gap to expert play requires tree
+search at inference, not just more or better RL training --- and tree
+search done well benefits from dedicated reinforcement-learning
+expertise.
 \end{abstract}
 
 % ── 1. Introduction ──────────────────────────────────────────────────────────
@@ -186,6 +191,10 @@ self-play games. Each group proceeds as follows.
              {\sum_{a' \in \mathcal{L}(s)} \pi_\theta(a' \mid s)}
     \]
     and draw the move as $a_t \sim \tilde{\pi}_\theta(\cdot \mid s_t)$.
+    \textit{In plain terms:} zero out the policy's weight on full
+    columns and renormalise so the remaining weights still sum to
+    one. The agent only ever picks legal columns; the network never
+    has to learn that rule itself.
     Stochastic sampling, rather than $\arg\max$ selection, is what provides
     the exploration signal that the policy gradient estimator relies on.
 
@@ -197,8 +206,12 @@ self-play games. Each group proceeds as follows.
     \]
     where $r \in \{+1, 0, -1\}$ is the game outcome from $M_1$'s perspective
     (win, draw, loss), $N$ is the number of $M_1$ moves in that game, and
-    $\gamma \in (0, 1]$ is the discount factor. This weighting assigns
-    higher credit to moves closer to the end of the game.
+    $\gamma \in (0, 1]$ is the discount factor.
+    \textit{In plain terms:} each move's training credit is the
+    game's eventual outcome ($+1$ for a win, $-1$ for a loss, $0$ for
+    a draw) discounted by how many moves earlier it played. Moves
+    closer to the end of the game receive more credit; very early
+    moves in a long game receive almost none.
 
     \item After a fixed number of games we sample a fixed-size mini-batch
     $\mathcal{B}$ of triplets $(s_t, a_t, G_t)$ and take a single gradient
@@ -216,14 +229,21 @@ self-play games. Each group proceeds as follows.
      = -\sum_{a} \tilde{\pi}_\theta(a \mid s_t) \log \tilde{\pi}_\theta(a \mid s_t)$
     is the entropy of the masked policy at $s_t$ and $\beta \geq 0$ is its
     coefficient. The entropy term discourages the policy from collapsing to
-    a handful of moves; we anneal $\beta$ linearly from a positive starting
-    value $\beta_0$ down to zero,
+    a handful of moves.
+    \textit{In plain terms:} maximise the log-probability of the
+    moves we made, weighted by how good the eventual outcome was,
+    with a small bonus for keeping the policy spread across multiple
+    columns rather than collapsing onto one.
+    We anneal $\beta$ linearly from a positive starting value
+    $\beta_0$ down to zero,
     \[
         \beta(g) \;=\; \beta_0 \cdot \Bigl(1 - \tfrac{g - 1}{G - 1}\Bigr),
     \]
-    where $g$ is the current group and $G$ is the total number of groups, so
-    the policy can sharpen in the late stage of training. The parameter
-    update is
+    where $g$ is the current group and $G$ is the total number of groups.
+    \textit{In plain terms:} the exploration bonus starts positive
+    and shrinks linearly to zero, so the policy explores broadly
+    early in training and is allowed to sharpen on its preferred
+    moves later. The parameter update is
     \[
         \theta \;\leftarrow\; \theta - \eta \, \nabla_\theta \mathcal{L}(\theta),
     \]
@@ -260,6 +280,12 @@ are selected with an $\epsilon$-greedy policy over the legal columns,
 where the exploration rate $\epsilon$ is annealed from $1.0$ at the start of
 training down to a small terminal value $\epsilon_\text{end}$.
 
+\textit{In plain terms:} most of the time, take whichever legal
+column the value network rates highest. With small probability
+$\epsilon$, ignore the network and pick a random legal column. The
+randomness keeps the training data diverse; we shrink it to near-zero
+by the end of training.
+
 Transitions are stored in a replay buffer $\mathcal{D}$ as tuples
 $(s_t, a_t, r_t, s_{t+1}, d_t)$, where $s_{t+1}$ is the board at the agent's
 \emph{next} turn after the opponent has moved (matching the coin-game
@@ -288,7 +314,18 @@ with the bootstrapped target
 where the online network $Q_\theta$ chooses the bootstrap action and the
 target network $Q_{\theta^{-}}$ evaluates it. The target-network weights are
 refreshed as $\theta^{-} \leftarrow \theta$ every fixed number of training
-steps. This combination of a replay buffer, a target network,
+steps.
+
+\textit{In plain terms:} train the value network to predict how good
+each (board, column) pair will turn out to be. The ``target'' it
+tries to match is the immediate reward plus a stable, slightly-stale
+estimate of the next state's best value. The current network is used
+to \emph{pick} the next column, but a slightly older copy of itself
+estimates \emph{how good} that column actually is --- a split that
+prevents the network from overestimating its own values in a
+self-reinforcing loop.
+
+This combination of a replay buffer, a target network,
 $\epsilon$-annealing, and Double Deep Q-Network targets is standard for
 stabilising value-based deep reinforcement learning.
 
@@ -359,16 +396,48 @@ The policy network is updated to minimise
     \Bigr)
     \right].
 \]
+\textit{In plain terms (the $Q$-loss):} same shape as the DQN value
+loss above, but the next-state estimate also rewards the policy for
+keeping options open --- the entropy term $-\alpha\log\pi_\phi$ inside
+$V_{\theta^{-}}$. A move that preserves multiple winning continuations
+scores higher than one that locks the agent into a single line.
+\textit{In plain terms (the policy loss):} push the policy toward
+whichever columns the $Q$-network rates highly, with a penalty if it
+gets too confident on any one action. The temperature $\alpha$
+controls how strong the don't-collapse-onto-one-move pressure is.
+
 Compared to the standard Bellman backup of Section~\ref{ssec:dqn}, the
 $\max$ over actions has been replaced by a soft maximum that includes
 an entropy bonus $-\alpha \log \pi_\phi(a \mid s)$. The temperature
 $\alpha$ controls how strongly the policy is pushed toward
 stochasticity: as $\alpha \to 0$ the backup recovers the hard $\max$ of
 standard $Q$-learning, and as $\alpha \to \infty$ the policy collapses
-toward uniform. The target network is updated by Polyak averaging
+toward uniform.
+
+\textit{What makes it ``soft''}.\, The word ``soft'' refers
+specifically to that entropy term inside the Bellman backup. A
+standard ``hard'' Bellman backup picks the single best move and
+assigns it all the value; a soft Bellman backup spreads value across
+several near-best moves and rewards the policy for keeping that
+spread. The policy that maximises the soft objective is therefore
+stochastic \emph{by design} --- it deliberately keeps probability
+mass on multiple good moves rather than collapsing onto one. This is
+a meaningfully different stance from $\epsilon$-greedy in DQN, where
+the policy is fundamentally a deterministic $\arg\max$ and randomness
+is bolted on as an exploration heuristic; in Soft Actor-Critic the
+stochasticity is built into the training objective itself, and even
+the deployed policy stays stochastic. The practical consequence is
+robustness: an agent that has never had to commit fully to a single
+move during training tends to play less brittle moves at test time.
+
+The target network is updated by Polyak averaging
 $\theta^{-} \leftarrow \tau\,\theta + (1 - \tau)\,\theta^{-}$ with a
 small mixing coefficient $\tau$, so the bootstrap target drifts slowly
 and does not chase its own tail.
+\textit{In plain terms (Polyak averaging):} instead of suddenly
+copying the trainer network's weights into the ``target'' network
+every so often, blend them gently every step. This gives the
+bootstrap a slowly-moving target rather than a jumpy one.
 
 Three project-specific choices proved important. First, the policy
 network was warm-started from CNN-C rather than from random
@@ -962,8 +1031,11 @@ points} on average across shared baselines. Against a random opponent it
 wins 82\% of the time; against the 1-ply heuristic it wins 70.5\%.
 The curriculum self-play design successfully recovered the vs-random
 win rate that had degraded in v3 (73\%) while keeping the overall
-average above both v2 and v3 at 76.2\%. We therefore select DQN v4 as
-our tournament submission.
+average above both v2 and v3 at 76.2\%. DQN v4 is therefore the
+stronger of the two course-required paradigms. The Soft Actor-Critic
+extension is compared directly to it in Section~\ref{ssec:dqn_vs_sac}
+below, and that comparison --- not the shared-baseline averages
+above --- is what determined the tournament submission.
 
 \subsection{Soft Actor-Critic training}
 \label{ssec:sac_results}
@@ -1020,6 +1092,48 @@ win rates are summarised in Table~\ref{tab:sac_eval}.
   in this project.}
   \label{tab:sac_eval}
 \end{table}
+
+\subsection{Head-to-head: Deep Q-Network vs.\ Soft Actor-Critic}
+\label{ssec:dqn_vs_sac}
+
+Mean win rate against a fixed evaluation pool is a coarse measure of
+agent strength: two agents can post nearly identical averages while
+having very different blind spots. To pick a tournament submission we
+therefore played the Deep Q-Network and the Soft Actor-Critic agent
+directly against each other, $200$ games per pairing with alternating
+first player. Results are reported in Figure~\ref{fig:dqn_v_sac}.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\textwidth]{dqn_v_sac.png}
+  \caption{Direct head-to-head between DQN v4 (blue) and the Soft
+  Actor-Critic agent (orange), $200$ games per pairing with alternating
+  first player. Although both agents posted similar mean win rates
+  against the shared evaluation pool ($76.2\%$ for DQN, $75.5\%$ for
+  SAC), the head-to-head reveals a much larger gap. SAC beats DQN
+  $92$--$8$ in direct play and outperforms DQN against depth-$3$
+  minimax by a wide margin ($74\%$ vs.\ $12\%$). Both agents handle a
+  uniformly random opponent fine.}
+  \label{fig:dqn_v_sac}
+\end{figure}
+
+\textit{In plain terms:} despite reporting nearly identical mean win
+rates against the shared evaluation opponents, SAC dominates DQN when
+they play each other directly --- $92\%$ to $8\%$ over $200$ games.
+SAC also handily outplays depth-$3$ minimax ($74\%$ vs.\ DQN's $12\%$).
+Both agents win essentially every game against a uniformly random
+opponent, as expected.
+
+This is one of the practically important findings of the report.
+Identical means against a shared opponent set hide the fact that DQN
+and SAC made different trade-offs during training and have different
+weaknesses in play. SAC's lower-variance off-policy training (the
+entropy-regularised policy with bootstrapped $Q$-targets and a slowly
+updated target network) appears to produce a more strategically robust
+agent than DQN's value-only approach against the kind of stronger,
+neural-network opponents that were not represented in our evaluation
+pool. We therefore selected the Soft Actor-Critic agent as our
+tournament submission.
 
 % ── 4. Discussion ────────────────────────────────────────────────────────────
 \section{Discussion}
@@ -1084,27 +1198,63 @@ non-stationarity of the self-play target distribution and cannot be
 expected to reach zero.
 
 \subsection{Tournament performance}
-% Fill in after the tournament:
-%   - Pool-round results (6 games, W/L/D)
-%   - Bracket outcome
-%   - What happened in the games we lost
-[To be completed after the tournament.]
+\label{ssec:tournament}
+
+The Soft Actor-Critic agent was our tournament submission, selected on
+the strength of the head-to-head dominance over DQN documented in
+Section~\ref{ssec:dqn_vs_sac}. In tournament play it performed
+poorly: we faced two opposing teams in succession and did not win a
+single game, against either opposing team, going either first or
+second. We were eliminated in the early rounds.
+
+At least one of the opposing teams was running an agent that combined
+a learned policy with Monte-Carlo tree search at inference time. The
+practical effect of that combination is large. Even a moderately
+trained policy network, when wrapped in a hundreds-of-simulations
+search per move, will reliably out-plan a strong policy network
+running alone. The search exposes forced sequences several plies
+deep --- the kind of multi-threat positions where one player builds
+two open three-in-a-row threats along the same diagonal that cannot
+both be blocked --- and the policy-only agent finds itself losing
+without having recognised the trap until it is unrecoverable.
+
+This pattern is the empirical version of a gap our evaluation already
+hinted at. The strongest opponent in our shared evaluation pool was
+depth-$3$ minimax, which simply does not see far enough ahead to
+construct double-threat positions reliably. Tournament-level opponents
+do, and SAC's $81\%$ win rate against depth-$3$ minimax in evaluation
+gave us a misleading sense of how the agent would generalise. The
+same SAC went unbeaten against depth-$3$ minimax in offline play and
+unwinning against MCTS-augmented opponents in live play --- the same
+agent, very different opponents, very different result. The tournament
+is therefore the cleanest possible illustration of the
+eval-vs-deployment gap that motivates the recommendation in the next
+section.
 
 % ── 5. Recommendation ────────────────────────────────────────────────────────
 \section{Recommendation}
 \label{sec:reco}
 
-\textbf{Short answer: yes, with caveats.}
+\textbf{Short answer: yes, hire the specialist --- but for tree
+search, not for more model training.}
 
-Our pilot demonstrates that reinforcement learning can produce a
-meaningfully stronger Connect-4 agent than either hand-written rules or
-supervised imitation alone. Starting from a supervised network that
-mimicked Monte-Carlo tree search decisions, policy gradient self-play
-raised win rates to approximately 60\% against a mixed opponent pool,
-and our Deep Q-Network reached 72.5\% on the same evaluation protocol
---- a result we achieved in roughly two hours of GPU compute per
-training run. These agents beat every fixed heuristic we tested and
-are substantially harder to defeat than the supervised baselines we
+Our strongest agent in evaluation, the Soft Actor-Critic submission,
+lost its initial-round tournament matches to opponents combining
+learned policies with Monte-Carlo tree search at inference time
+(Section~\ref{ssec:tournament}). That outcome is the cleanest
+empirical case we have for the recommendation, so we lead with it:
+closing the gap to expert Connect-4 play requires tree search at
+inference, not just more or better RL training.
+
+That said, the pilot does establish the case for further investment
+in reinforcement learning itself, just within a clearly bounded
+scope. Starting from a supervised network that mimicked Monte-Carlo
+tree search decisions, policy gradient self-play raised win rates to
+approximately 60\% against a mixed opponent pool, and our Deep
+Q-Network reached 76.2\% on the same evaluation protocol --- a result
+we achieved in roughly two hours of GPU compute per training run.
+These agents beat every fixed heuristic we tested and are
+substantially harder to defeat than the supervised baselines we
 started from.
 
 That said, there are important qualifications before committing to a
