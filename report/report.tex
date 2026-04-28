@@ -50,20 +50,25 @@ through a Double-DQN target with a replay buffer, target-network
 synchronisation, and curriculum self-play. On a shared evaluation
 harness, the policy gradient agent reached a $60.8\%$ mean win rate
 while the Deep Q-Network agent reached $76.2\%$ --- $+15.4$~percentage
-points stronger and the strongest agent we trained. A Soft
-Actor-Critic extension that fuses the two paradigms reached $75.5\%$,
-comparable to the Deep Q-Network and confirming that the off-policy
-actor-critic approach is competitive with the strongest
-discrete-action method.
+points stronger than the policy gradient agent on shared opponents.
+A Soft Actor-Critic extension that fuses the two paradigms reached
+$75.5\%$ on the same opponents but beat the Deep Q-Network in direct
+head-to-head play, $92$--$8$ over $200$ games. Soft Actor-Critic was
+therefore selected as our tournament submission. In tournament play,
+however, our agent lost decisively to opposing teams whose agents
+combined a learned policy with Monte-Carlo tree search at inference
+time --- the empirical anchor for our recommendation that follows.
 
 We recommend hiring one reinforcement learning specialist for a 3--6
 month engagement to build an AlphaZero-style agent (a learned policy
 plus value network combined with Monte-Carlo tree search at inference
 time) on top of the codebase developed for this pilot. Self-play
 already produces an opponent substantially stronger than the
-supervised baselines we started from; closing the remaining gap to
-expert play most directly requires tree-search techniques that benefit
-from dedicated reinforcement-learning expertise.
+supervised baselines we started from, but our tournament loss makes
+clear that closing the remaining gap to expert play requires tree
+search at inference, not just more or better RL training --- and tree
+search done well benefits from dedicated reinforcement-learning
+expertise.
 \end{abstract}
 
 % ── 1. Introduction ──────────────────────────────────────────────────────────
@@ -186,6 +191,10 @@ self-play games. Each group proceeds as follows.
              {\sum_{a' \in \mathcal{L}(s)} \pi_\theta(a' \mid s)}
     \]
     and draw the move as $a_t \sim \tilde{\pi}_\theta(\cdot \mid s_t)$.
+    \textit{In plain terms:} zero out the policy's weight on full
+    columns and renormalise so the remaining weights still sum to
+    one. The agent only ever picks legal columns; the network never
+    has to learn that rule itself.
     Stochastic sampling, rather than $\arg\max$ selection, is what provides
     the exploration signal that the policy gradient estimator relies on.
 
@@ -197,8 +206,12 @@ self-play games. Each group proceeds as follows.
     \]
     where $r \in \{+1, 0, -1\}$ is the game outcome from $M_1$'s perspective
     (win, draw, loss), $N$ is the number of $M_1$ moves in that game, and
-    $\gamma \in (0, 1]$ is the discount factor. This weighting assigns
-    higher credit to moves closer to the end of the game.
+    $\gamma \in (0, 1]$ is the discount factor.
+    \textit{In plain terms:} each move's training credit is the
+    game's eventual outcome ($+1$ for a win, $-1$ for a loss, $0$ for
+    a draw) discounted by how many moves earlier it played. Moves
+    closer to the end of the game receive more credit; very early
+    moves in a long game receive almost none.
 
     \item After a fixed number of games we sample a fixed-size mini-batch
     $\mathcal{B}$ of triplets $(s_t, a_t, G_t)$ and take a single gradient
@@ -216,14 +229,21 @@ self-play games. Each group proceeds as follows.
      = -\sum_{a} \tilde{\pi}_\theta(a \mid s_t) \log \tilde{\pi}_\theta(a \mid s_t)$
     is the entropy of the masked policy at $s_t$ and $\beta \geq 0$ is its
     coefficient. The entropy term discourages the policy from collapsing to
-    a handful of moves; we anneal $\beta$ linearly from a positive starting
-    value $\beta_0$ down to zero,
+    a handful of moves.
+    \textit{In plain terms:} maximise the log-probability of the
+    moves we made, weighted by how good the eventual outcome was,
+    with a small bonus for keeping the policy spread across multiple
+    columns rather than collapsing onto one.
+    We anneal $\beta$ linearly from a positive starting value
+    $\beta_0$ down to zero,
     \[
         \beta(g) \;=\; \beta_0 \cdot \Bigl(1 - \tfrac{g - 1}{G - 1}\Bigr),
     \]
-    where $g$ is the current group and $G$ is the total number of groups, so
-    the policy can sharpen in the late stage of training. The parameter
-    update is
+    where $g$ is the current group and $G$ is the total number of groups.
+    \textit{In plain terms:} the exploration bonus starts positive
+    and shrinks linearly to zero, so the policy explores broadly
+    early in training and is allowed to sharpen on its preferred
+    moves later. The parameter update is
     \[
         \theta \;\leftarrow\; \theta - \eta \, \nabla_\theta \mathcal{L}(\theta),
     \]
@@ -260,6 +280,12 @@ are selected with an $\epsilon$-greedy policy over the legal columns,
 where the exploration rate $\epsilon$ is annealed from $1.0$ at the start of
 training down to a small terminal value $\epsilon_\text{end}$.
 
+\textit{In plain terms:} most of the time, take whichever legal
+column the value network rates highest. With small probability
+$\epsilon$, ignore the network and pick a random legal column. The
+randomness keeps the training data diverse; we shrink it to near-zero
+by the end of training.
+
 Transitions are stored in a replay buffer $\mathcal{D}$ as tuples
 $(s_t, a_t, r_t, s_{t+1}, d_t)$, where $s_{t+1}$ is the board at the agent's
 \emph{next} turn after the opponent has moved (matching the coin-game
@@ -288,7 +314,18 @@ with the bootstrapped target
 where the online network $Q_\theta$ chooses the bootstrap action and the
 target network $Q_{\theta^{-}}$ evaluates it. The target-network weights are
 refreshed as $\theta^{-} \leftarrow \theta$ every fixed number of training
-steps. This combination of a replay buffer, a target network,
+steps.
+
+\textit{In plain terms:} train the value network to predict how good
+each (board, column) pair will turn out to be. The ``target'' it
+tries to match is the immediate reward plus a stable, slightly-stale
+estimate of the next state's best value. The current network is used
+to \emph{pick} the next column, but a slightly older copy of itself
+estimates \emph{how good} that column actually is --- a split that
+prevents the network from overestimating its own values in a
+self-reinforcing loop.
+
+This combination of a replay buffer, a target network,
 $\epsilon$-annealing, and Double Deep Q-Network targets is standard for
 stabilising value-based deep reinforcement learning.
 
@@ -359,16 +396,48 @@ The policy network is updated to minimise
     \Bigr)
     \right].
 \]
+\textit{In plain terms (the $Q$-loss):} same shape as the DQN value
+loss above, but the next-state estimate also rewards the policy for
+keeping options open --- the entropy term $-\alpha\log\pi_\phi$ inside
+$V_{\theta^{-}}$. A move that preserves multiple winning continuations
+scores higher than one that locks the agent into a single line.
+\textit{In plain terms (the policy loss):} push the policy toward
+whichever columns the $Q$-network rates highly, with a penalty if it
+gets too confident on any one action. The temperature $\alpha$
+controls how strong the don't-collapse-onto-one-move pressure is.
+
 Compared to the standard Bellman backup of Section~\ref{ssec:dqn}, the
 $\max$ over actions has been replaced by a soft maximum that includes
 an entropy bonus $-\alpha \log \pi_\phi(a \mid s)$. The temperature
 $\alpha$ controls how strongly the policy is pushed toward
 stochasticity: as $\alpha \to 0$ the backup recovers the hard $\max$ of
 standard $Q$-learning, and as $\alpha \to \infty$ the policy collapses
-toward uniform. The target network is updated by Polyak averaging
+toward uniform.
+
+\textit{What makes it ``soft''}.\, The word ``soft'' refers
+specifically to that entropy term inside the Bellman backup. A
+standard ``hard'' Bellman backup picks the single best move and
+assigns it all the value; a soft Bellman backup spreads value across
+several near-best moves and rewards the policy for keeping that
+spread. The policy that maximises the soft objective is therefore
+stochastic \emph{by design} --- it deliberately keeps probability
+mass on multiple good moves rather than collapsing onto one. This is
+a meaningfully different stance from $\epsilon$-greedy in DQN, where
+the policy is fundamentally a deterministic $\arg\max$ and randomness
+is bolted on as an exploration heuristic; in Soft Actor-Critic the
+stochasticity is built into the training objective itself, and even
+the deployed policy stays stochastic. The practical consequence is
+robustness: an agent that has never had to commit fully to a single
+move during training tends to play less brittle moves at test time.
+
+The target network is updated by Polyak averaging
 $\theta^{-} \leftarrow \tau\,\theta + (1 - \tau)\,\theta^{-}$ with a
 small mixing coefficient $\tau$, so the bootstrap target drifts slowly
 and does not chase its own tail.
+\textit{In plain terms (Polyak averaging):} instead of suddenly
+copying the trainer network's weights into the ``target'' network
+every so often, blend them gently every step. This gives the
+bootstrap a slowly-moving target rather than a jumpy one.
 
 Three project-specific choices proved important. First, the policy
 network was warm-started from CNN-C rather than from random
@@ -432,24 +501,404 @@ deployment we want the strongest move rather than a sample.
 \label{sec:results}
 
 \subsection{Policy gradient training}
+\label{ssec:pg_results}
 
-% ── TODO: PG experiment notes go here. The figure is already wired up below.
-% Things to cover:
-%   - Starting win rate and where it ended up
-%   - Key hyperparameters you settled on (LR, gamma, batch size, entropy coeff)
-%   - What experiments you tried and what happened (e.g. different LR, entropy annealing)
-%   - Why you think it plateaued where it did
+The policy gradient procedure described in Section~\ref{ssec:pg} did not
+work the first time we ran it. Producing the $60.8\%$ win rate that
+appears as the PG baseline elsewhere in this report required seven
+training runs and a chain of diagnoses, each pointing at a different
+failure mode of REINFORCE under sparse binary rewards. We walk through
+those runs here because the failures are as informative as the final
+hyperparameter settings: most of them are predictable consequences of
+the policy gradient estimator interacting badly with either the
+opponent design, the batch construction, or the pretrained warm start.
+
+A note on tracking. Run~1 ran for roughly eight wall-clock hours
+without producing any visible change in win rate or loss. After that
+result we judged the project needed more rigorous experiment tracking
+than console output, and integrated Weights \& Biases for live loss
+and win-rate logging starting with Run~2. Run~1 is therefore the only
+run not represented as a trace on Figures~\ref{fig:pg_baseline}
+and~\ref{fig:pg_experiments}. Starting with Run~2, we also stopped
+training as soon as it was clear no further improvement would occur
+--- either after a collapse to near-zero win rate or after a long
+flat plateau --- rather than running every experiment to its full
+nominal length. This kept the iteration cycle fast enough to test
+multiple hypotheses per day. The two exceptions are Run~1, which we
+let finish before W\&B was wired up, and Run~3, which we let run
+its full $500$ groups to confirm whether the partial recovery we saw
+in its second half would resolve into anything competitive (it did
+not).
+
+\subsubsection{Runs 1 and 2: too little signal, then too much}
+\label{sssec:pg_baseline}
+
+\textbf{Run~1 (flat, no learning).} The first run trained the
+Transformer-A network ($M_1$) for $500$ groups of $50$ games each, with
+a single gradient step taken at the end of each group, a learning rate
+of $10^{-4}$, no entropy regularisation, no gradient clipping, return
+normalisation within the batch, and $M_2$ sampling stochastically from
+its own masked policy with no tactical shortcut. The result was a
+perfectly flat training curve: win rate and loss did not move across
+all $500$ groups. One gradient step per $50$ games is simply not
+enough updates to produce a measurable signal at this learning rate.
+We responded by raising the learning rate to $10^{-3}$, taking $10$
+gradient steps per group instead of one (one update every five games),
+adding an entropy coefficient $\beta = 0.01$ to discourage premature
+collapse, adding gradient clipping at norm $1.0$ for stability, and
+turning on the $M_2$ tactical win/block shortcut described in
+Section~\ref{ssec:pg} so opponents would block obvious threats and
+take obvious wins.
+
+\textbf{Run~2 (\emph{faithful-violet-1}, collapse at group 26 with no
+recovery; halted at group $45$).} Those changes overshot. The first
+W\&B-tracked run was the most aggressive configuration we ever
+trained on: a $10\times$ higher learning rate and a $10\times$
+increase in gradient updates per group --- a $20\times$ effective
+step-size increase relative to Run~1. Win rate dropped slowly and
+collapsed to near zero by group $26$, and the model never recovered.
+We let it run a few groups past the collapse to confirm the
+trajectory was not going to bounce back, then halted at group $45$
+(Figure~\ref{fig:pg_baseline}, blue trace). We reverted the learning
+rate to $5 \times 10^{-4}$ as a compromise between Run~1's
+underlearning and Run~2's instability, deleted Run~2's diverged
+checkpoints, and reverted $M_1$ to the original
+\texttt{transformer\_v2.keras}.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.95\textwidth]{pg_training_curves.png}
-  \caption{Policy gradient training over 500 groups. Left: policy loss
-  (negative log-likelihood weighted by discounted return). Right: M1 win rate
-  against a uniformly-sampled opponent pool; the 20-group smoothed average
-  (orange) rises from roughly 40\% to a plateau near 60\%. The dashed line
-  marks the 50\% baseline.}
-  \label{fig:pg_training}
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{Baseline_Roll_WR.png}
+    \caption{Rolling win rate.}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{Baseline_Roll_Loss.png}
+    \caption{Rolling policy gradient loss.}
+  \end{subfigure}
+  \caption{Group-structured Transformer runs. Run~2
+  (\textit{faithful-violet-1}, blue) used learning rate $10^{-3}$ and
+  $10$ gradient steps per group; win rate collapsed to near zero by
+  group~$26$ and we halted the run at group~$45$ once it was clear no
+  recovery would occur. Run~3 (\textit{cosmic-capybara-2}, red)
+  reverted the learning rate to $5 \times 10^{-4}$ but kept the $M_2$
+  win/block shortcut and within-batch return normalisation; it
+  collapsed near group~$150$ and showed only a partial recovery over
+  the remainder of its full $500$-group training run. Run~1 produced
+  no measurable movement and pre-dates the Weights \& Biases
+  integration, so it does not appear on these charts.}
+  \label{fig:pg_baseline}
 \end{figure}
+
+\subsubsection{Run 3: signal destruction by normalisation}
+\label{sssec:pg_run3}
+
+\textbf{Run~3 (\emph{cosmic-capybara-2}, collapse around group 150
+with partial recovery; ran the full $500$ groups).} At the gentler
+learning rate the failure pattern softened but did not go away. Win
+rate held longer than in Run~2 before collapsing to near zero around
+group $150$, and the model managed a slow partial recovery over the
+remainder of the run --- but it never returned to a competitive win
+rate, and the run finished its full $500$ groups with no net
+improvement (Figure~\ref{fig:pg_baseline}, red trace). The fact that
+a $2\times$ smaller learning rate produced a delayed and shallower
+collapse rather than no collapse at all told us the step size had
+been part of the Run~2 problem, but not the whole of it: there was
+something structural in the gradient signal itself that drove the
+policy toward zero win rate regardless of how aggressively we updated
+on it. We traced that structural issue to an interaction between
+three components that were each individually defensible:
+
+\begin{enumerate}
+    \item \emph{Strong opponents.} The $M_2$ win/block tactical
+    shortcut made opponents an effective $1$-ply lookahead player,
+    which $M_1$ at this stage of training rarely beat. Most games in a
+    batch ended with $M_1$ losing, so most returns $G_t$ in a batch
+    were negative and of similar magnitude.
+    \item \emph{Within-batch return normalisation.} Subtracting the
+    mean and dividing by the standard deviation of returns is a
+    standard variance-reduction trick, but its assumption is that the
+    batch contains a mix of better-than-average and worse-than-average
+    outcomes. When every return in the batch is negative, normalisation
+    re-centres them around zero with mixed signs --- effectively
+    telling the gradient that some losses were ``good'' relative to
+    other losses. The terminal loss signal is destroyed.
+    \item \emph{Entropy bonus with no countervailing reward signal.}
+    With the discounted-return term zeroed out by normalisation, the
+    only consistent gradient force left was the entropy term, which
+    pushes $\pi_\theta$ toward uniform. Uniform play loses even more
+    games against a tactical $M_2$, which produces even more uniformly
+    negative returns, which the normalisation again wipes out. The
+    feedback loop collapses the policy.
+\end{enumerate}
+
+We removed $M_2$'s tactical shortcut so opponents sampled stochastically
+from the same masked policy as $M_1$, which restored a non-trivial
+fraction of $M_1$ wins in each batch. We also reduced the gradient-step
+density from one update every five games to one every ten games (five
+steps per group of $50$) to take a more conservative step into the
+next experiment.
+
+\subsubsection{Run 4: opponent fix alone is not enough}
+\label{sssec:pg_run4}
+
+\textbf{Run~4 (\emph{apricot-eon-4}, no improvement; halted at
+game~$1{,}903$).}
+Removing $M_2$'s tactical shortcut eliminated the most aggressive
+cause of the Run~3 collapse but did not produce learning. Win rate
+stayed flat or drifted slightly downward and the loss showed no
+signal of useful policy improvement, so we halted at game~$1{,}903$,
+roughly group~$38$ of the nominal $500$
+(Figure~\ref{fig:pg_experiments}, purple trace). The diagnosis was that the two remaining components
+from Run~3 were still individually capable of suppressing the
+gradient signal: any batch that happened to contain a streak of
+losses (or wins) would still have its return signal flattened by
+within-batch normalisation, and the constant entropy bonus continued
+to apply a steady pull on the pretrained Transformer's distribution
+regardless of outcome. The group structure was also still producing
+only five gradient steps per $\sim\!50$ games, which is a sparse
+update rate for what we now suspected was a noisy estimator.
+
+We made a larger set of changes for Run~5 to address all three issues
+at once. We switched $M_1$ from the Transformer to CNN-A
+(\texttt{cnn\_v2.keras}), which trains faster and was the stronger
+supervised baseline of the two. We dropped the explicit group
+structure entirely in favour of a flat loop of $10{,}000$ individual
+games with one gradient step per game. We reduced the batch size
+from $32$ to $3$ (approximately one game's worth of triplets, since
+each game produces $\sim 7$--$15$ $M_1$ moves, so the batch is
+effectively that single game's transitions). We added a $50/50$ coin
+flip per game between zero and a small handful of random warm-up
+moves, so $M_1$ trained on both opening and mid-game positions. We
+removed within-batch return normalisation, having now identified it
+as actively harmful for batches where all returns share the same
+sign. And we switched the loss and win-rate metrics to per-game
+resolution rather than per-group, giving us a much more granular
+view of the training dynamics.
+
+\subsubsection{Run 5: smaller batches expose new failure modes}
+\label{sssec:pg_run5}
+
+\textbf{Run~5 (\emph{olive-frost-3}, gradual decline from $\sim\!60\%$
+to $\sim\!20\%$; halted at game~$3{,}382$).} With those changes,
+training looked healthy at first. Win rate sat between $55\%$ and
+$61\%$ over games $100$--$500$ with a positive policy loss
+($\sim +0.95$), consistent with a pretrained model still playing well
+(Figure~\ref{fig:pg_experiments}, green trace). Then, between games
+$1{,}000$ and $1{,}500$, win rate drifted down to roughly $30\%$ while
+policy loss simultaneously fell to strongly negative values
+($-4$ to $-1$). The decline continued slowly for another $\sim 2{,}000$
+games, after which the trajectory was clearly not going to recover
+and we stopped the run. Two things were going wrong at once:
+
+\begin{enumerate}
+    \item \emph{Entropy bonus eroding the warm start.} A
+    constant $\beta = 0.01$ applies a force toward uniform on every
+    update regardless of whether $M_1$ won or lost. For a network
+    initialised at random this is harmless and helpful exploration;
+    for a pretrained network it acts as a slow leak that pulls the
+    policy back toward the chance distribution it was trained away
+    from. Across $1{,}000+$ updates the cumulative drift was enough to
+    visibly degrade play.
+    \item \emph{Misleading loss metric.} As the policy concentrated
+    onto a few preferred columns, low-probability columns received
+    $\pi \approx e^{-5}$, so any update that did fire on one of those
+    rare moves produced $G_t \cdot \log \pi \approx -5$ on a single
+    sample. With batch size $3$, one such sample dominated the batch
+    and pushed the reported policy loss strongly negative even though
+    the model was losing $\sim\!87\%$ of games. The training loss had
+    stopped tracking performance and was instead measuring how
+    concentrated the policy had become.
+\end{enumerate}
+
+We set $\beta = 0$ (no entropy bonus for the pretrained warm start; the
+softmax already explores plenty on the moves where it is genuinely
+uncertain) and increased the batch size from $3$ to $10$ to reduce
+the variance of the loss estimate.
+
+\subsubsection{Run 6: the fundamental REINFORCE failure mode at $50\%$}
+\label{sssec:pg_run6}
+
+\textbf{Run~6 (\emph{unique-cosmos-5}, stable for $\sim\!2{,}000$
+games then collapse; halted at game~$3{,}823$).} Run~6 was the
+cleanest run yet (Figure~\ref{fig:pg_experiments}, pink trace). Win
+rate sat at approximately $50\%$ for the first $\sim\!2{,}000$ games
+with policy loss oscillating around zero. Then, around game
+$2{,}000$, the loss began oscillating more widely, fell sharply to
+roughly $-2$ and continued falling, and win rate dropped below
+$20\%$ --- a slower and milder version of the Run~3 collapse but with
+the same shape. We stopped the run once the trajectory was clearly
+not going to recover.
+
+This was the diagnostic moment for the whole investigation. The
+fundamental issue is structural to REINFORCE on binary terminal
+rewards near a $50\%$ win rate: the expected gradient is
+\emph{approximately zero}. Wins produce positive $G_t$ and losses
+produce negative $G_t$ of equal magnitude, and at $50\%$ they cancel
+in the average gradient. The agent is not actually learning during
+that flat segment; it is performing a random walk in parameter space
+driven entirely by gradient noise. After roughly $2{,}000$ noisy
+steps the weights drift far enough to tip the win rate slightly
+below $50\%$. Once below $50\%$, losses outnumber wins in the average
+gradient, the gradient becomes consistently negative, and the same
+self-reinforcing collapse from Run~3 takes hold.
+
+The diagnosis suggested that for vanilla REINFORCE with sparse
+$\pm 1$ rewards, the right objective is not to keep training
+indefinitely while waiting for further improvement, but to detect
+when the agent has stopped improving and lock in the strongest weights
+seen so far before noise drives it off the plateau. We added a
+rollback mechanism that implements exactly this. Every $500$ games we
+compute the rolling $500$-game win rate and compare it to the win
+rate at the time of the last saved snapshot. If win rate has held or
+improved, we update the snapshot to the current weights; if win rate
+has declined, we silently revert the model weights to the snapshot.
+This makes the training trajectory monotone non-decreasing in
+best-observed win rate and prevents the random walk from becoming
+irreversible. We initially tried a $100$-game rollback interval, but
+$100$ games is too few for the $\pm 1$ signal to give a statistically
+meaningful win-rate comparison at this batch size --- the comparison
+was dominated by noise, and the rollback fired almost every interval.
+The $500$-game window was a much more reliable estimator and became
+the final setting.
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{Experiments_Roll_WR.png}
+    \caption{Rolling win rate.}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{Experiments_Roll_Loss.png}
+    \caption{Rolling policy gradient loss.}
+  \end{subfigure}
+  \caption{Per-game training runs. Run~4
+  (\textit{apricot-eon-4}, purple) removed the $M_2$ win/block shortcut
+  but kept the Transformer, return normalisation, and entropy bonus;
+  it produced no improvement and was halted at game~$1{,}903$. Run~5
+  (\textit{olive-frost-3}, green) switched to CNN-A with per-game
+  updates and no return normalisation; the entropy bonus and small
+  batch size eroded the warm start over $\sim\!1{,}000+$ games and the
+  run was halted at game~$3{,}382$. Run~6 (\textit{unique-cosmos-5},
+  pink) removed the entropy bonus and enlarged the batch; it held a
+  $\sim\!50\%$ win rate for $\sim\!2{,}000$ games before REINFORCE's
+  gradient-noise random walk tipped it below $50\%$ and triggered a
+  self-reinforcing collapse, halted at game~$3{,}823$. Run~7
+  (\textit{gallant-puddle-7}, teal) added the snapshot-rollback
+  mechanism on top of Run~6's configuration and ran for
+  $4{,}402$ games; its outcome is described in
+  Section~\ref{sssec:pg_run7}.}
+  \label{fig:pg_experiments}
+\end{figure}
+
+\subsubsection{Run 7: deploying the rollback, and what it revealed}
+\label{sssec:pg_run7}
+
+\textbf{Run~7 (\emph{gallant-puddle-7}, no improvement ever locked in
+over $4{,}402$ games).} With the rollback wired up, we ran a final
+$4{,}402$-game training session under the configuration that
+Runs~3--6 had converged on: CNN-A as $M_1$, learning rate
+$5 \times 10^{-4}$, batch size $10$, one gradient step per game, no
+return normalisation, no entropy bonus, $M_2$ sampling stochastically
+from the same masked policy, and a $500$-game rolling-win-rate
+comparison window. The first checkpoint, taken at game $500$, became
+the reference snapshot. Over the remaining $3{,}902$ games we ran $7$
+subsequent rollback checks, and \emph{every single one of them
+triggered a revert}. From game $1{,}000$ onwards, the model's
+$500$-game rolling win rate was lower than the game-$500$ snapshot's
+win rate at every check, the weights were reset, and training
+resumed from the same snapshot. The model never improved beyond that
+initial checkpoint.
+
+This is a more interesting result than it looks. The rollback
+succeeded at what we designed it to do --- it prevented the
+catastrophic collapses we saw in Runs~3 and~6 and held the agent at
+the strongest weights it had seen --- but in doing so it exposed a
+stronger claim about the underlying training dynamics. The gradient
+signal under our REINFORCE configuration is not just noisy; it is, on
+the evidence of seven consecutive reverts, \emph{never reliably
+upward}. Across all $3{,}902$ post-snapshot games, every $500$-game
+window of training either left the model at roughly the same win rate
+(a random walk near $50\%$) or actively degraded it. The pretrained
+CNN-A warm start appears to occupy a local optimum that pure
+REINFORCE with sparse $\pm 1$ terminal rewards cannot escape: any
+direction the gradient pulls the policy in is either uninformative or
+makes the policy worse.
+
+Two structural reasons stand out. First, REINFORCE's expected
+gradient near a $50\%$ win rate is approximately zero (the diagnosis
+from Run~6), so there is no consistent direction for the optimiser
+to follow. Second, even when the gradient does have a direction, the
+estimator's variance under sparse $\pm 1$ rewards is large enough
+that single-game updates are dominated by noise --- and the
+warm-started policy is already close enough to a local optimum that
+random-walk steps are more likely to leave the basin than to find a
+better one inside it. The combination means the rollback wrapper is
+doing the only useful work in the training loop: it is not
+facilitating improvement, it is preventing degradation of the warm
+start.
+
+\subsubsection{Final configuration and outcome}
+\label{sssec:pg_final}
+
+The strongest policy gradient agent we produced is therefore the
+game-$500$ snapshot from Run~7: CNN-A warm weights with a small
+amount of policy gradient exposure, locked in by the rollback before
+noise could degrade it. On the shared evaluation harness (described
+in Section~\ref{ssec:eval}) this snapshot reaches the $60.8\%$ mean
+win rate reported in Section~\ref{ssec:headtohead} and used as the
+PG baseline throughout the rest of the report. The full final
+configuration was: CNN-A as $M_1$, learning rate $5 \times 10^{-4}$,
+batch size $10$, one gradient step per game, no within-batch return
+normalisation, no entropy bonus, $M_2$ sampling stochastically from
+the same masked policy as $M_1$ (no tactical shortcut), $50/50$
+random-warm-up coin flip per game, and a $500$-game rolling-win-rate
+snapshot rollback.
+
+Two takeaways are worth stating plainly. First, nearly every
+variance-reduction or exploration-encouraging technique that is
+standard advice for policy gradient methods --- within-batch return
+normalisation, entropy bonuses, tactical-strong opponents --- was
+actively harmful in our setting, because each of them either
+destroyed or overrode the sparse $\pm 1$ terminal-reward signal that
+REINFORCE depends on. The single modification that produced the most
+reliable training was the least sophisticated one: a
+checkpoint-and-rollback wrapper around the training loop. Second,
+and more fundamentally, Run~7's seven consecutive reverts indicate
+that vanilla REINFORCE with sparse binary terminal rewards cannot
+reliably improve on a strong supervised warm start in this setting.
+The $60.8\%$ result is best understood as a floor that policy
+gradient preserved rather than a ceiling it climbed to. This is
+consistent with the broader observation in
+Section~\ref{sec:discussion} that REINFORCE on binary terminal
+rewards is a fragile estimator, and helps explain why the off-policy
+actor-critic and value-based methods we explored later --- which
+use bootstrapped value estimates instead of Monte-Carlo returns and
+therefore have far lower gradient variance --- were better-suited to
+Connect-4's reward structure.
+
+If we were to continue iterating on the policy gradient agent
+specifically, two modifications stand out as the most promising next
+steps. The first is a \emph{running return baseline}: subtract an
+exponential moving average of recent returns from each $G_t$ before
+computing the loss. This is a different variance-reduction strategy
+than within-batch normalisation --- it does not zero out a batch of
+all-negative returns, because the baseline is an estimate of recent
+average performance rather than this batch's mean. When the agent's
+win rate dips below $50\%$, recent average return is also negative,
+so subtracting it amplifies the relative magnitude of wins and
+softens losses, restoring a usable directional signal where the
+naive estimator has none. The second is taking \emph{multiple
+gradient steps per game} (e.g.\ three) on the same game's triplets,
+which increases the total update count without reducing game
+throughput. Both are cheap to implement on top of the existing
+training loop and would be the natural starting point for any
+follow-on work.
 
 \subsection{Deep Q-Network training}
 \label{ssec:dqn_results}
@@ -582,8 +1031,11 @@ points} on average across shared baselines. Against a random opponent it
 wins 82\% of the time; against the 1-ply heuristic it wins 70.5\%.
 The curriculum self-play design successfully recovered the vs-random
 win rate that had degraded in v3 (73\%) while keeping the overall
-average above both v2 and v3 at 76.2\%. We therefore select DQN v4 as
-our tournament submission.
+average above both v2 and v3 at 76.2\%. DQN v4 is therefore the
+stronger of the two course-required paradigms. The Soft Actor-Critic
+extension is compared directly to it in Section~\ref{ssec:dqn_vs_sac}
+below, and that comparison --- not the shared-baseline averages
+above --- is what determined the tournament submission.
 
 \subsection{Soft Actor-Critic training}
 \label{ssec:sac_results}
@@ -640,6 +1092,48 @@ win rates are summarised in Table~\ref{tab:sac_eval}.
   in this project.}
   \label{tab:sac_eval}
 \end{table}
+
+\subsection{Head-to-head: Deep Q-Network vs.\ Soft Actor-Critic}
+\label{ssec:dqn_vs_sac}
+
+Mean win rate against a fixed evaluation pool is a coarse measure of
+agent strength: two agents can post nearly identical averages while
+having very different blind spots. To pick a tournament submission we
+therefore played the Deep Q-Network and the Soft Actor-Critic agent
+directly against each other, $200$ games per pairing with alternating
+first player. Results are reported in Figure~\ref{fig:dqn_v_sac}.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\textwidth]{dqn_v_sac.png}
+  \caption{Direct head-to-head between DQN v4 (blue) and the Soft
+  Actor-Critic agent (orange), $200$ games per pairing with alternating
+  first player. Although both agents posted similar mean win rates
+  against the shared evaluation pool ($76.2\%$ for DQN, $75.5\%$ for
+  SAC), the head-to-head reveals a much larger gap. SAC beats DQN
+  $92$--$8$ in direct play and outperforms DQN against depth-$3$
+  minimax by a wide margin ($74\%$ vs.\ $12\%$). Both agents handle a
+  uniformly random opponent fine.}
+  \label{fig:dqn_v_sac}
+\end{figure}
+
+\textit{In plain terms:} despite reporting nearly identical mean win
+rates against the shared evaluation opponents, SAC dominates DQN when
+they play each other directly --- $92\%$ to $8\%$ over $200$ games.
+SAC also handily outplays depth-$3$ minimax ($74\%$ vs.\ DQN's $12\%$).
+Both agents win essentially every game against a uniformly random
+opponent, as expected.
+
+This is one of the practically important findings of the report.
+Identical means against a shared opponent set hide the fact that DQN
+and SAC made different trade-offs during training and have different
+weaknesses in play. SAC's lower-variance off-policy training (the
+entropy-regularised policy with bootstrapped $Q$-targets and a slowly
+updated target network) appears to produce a more strategically robust
+agent than DQN's value-only approach against the kind of stronger,
+neural-network opponents that were not represented in our evaluation
+pool. We therefore selected the Soft Actor-Critic agent as our
+tournament submission.
 
 % ── 4. Discussion ────────────────────────────────────────────────────────────
 \section{Discussion}
@@ -704,27 +1198,63 @@ non-stationarity of the self-play target distribution and cannot be
 expected to reach zero.
 
 \subsection{Tournament performance}
-% Fill in after the tournament:
-%   - Pool-round results (6 games, W/L/D)
-%   - Bracket outcome
-%   - What happened in the games we lost
-[To be completed after the tournament.]
+\label{ssec:tournament}
+
+The Soft Actor-Critic agent was our tournament submission, selected on
+the strength of the head-to-head dominance over DQN documented in
+Section~\ref{ssec:dqn_vs_sac}. In tournament play it performed
+poorly: we faced two opposing teams in succession and did not win a
+single game, against either opposing team, going either first or
+second. We were eliminated in the early rounds.
+
+At least one of the opposing teams was running an agent that combined
+a learned policy with Monte-Carlo tree search at inference time. The
+practical effect of that combination is large. Even a moderately
+trained policy network, when wrapped in a hundreds-of-simulations
+search per move, will reliably out-plan a strong policy network
+running alone. The search exposes forced sequences several plies
+deep --- the kind of multi-threat positions where one player builds
+two open three-in-a-row threats along the same diagonal that cannot
+both be blocked --- and the policy-only agent finds itself losing
+without having recognised the trap until it is unrecoverable.
+
+This pattern is the empirical version of a gap our evaluation already
+hinted at. The strongest opponent in our shared evaluation pool was
+depth-$3$ minimax, which simply does not see far enough ahead to
+construct double-threat positions reliably. Tournament-level opponents
+do, and SAC's $81\%$ win rate against depth-$3$ minimax in evaluation
+gave us a misleading sense of how the agent would generalise. The
+same SAC went unbeaten against depth-$3$ minimax in offline play and
+unwinning against MCTS-augmented opponents in live play --- the same
+agent, very different opponents, very different result. The tournament
+is therefore the cleanest possible illustration of the
+eval-vs-deployment gap that motivates the recommendation in the next
+section.
 
 % ── 5. Recommendation ────────────────────────────────────────────────────────
 \section{Recommendation}
 \label{sec:reco}
 
-\textbf{Short answer: yes, with caveats.}
+\textbf{Short answer: yes, hire the specialist --- but for tree
+search, not for more model training.}
 
-Our pilot demonstrates that reinforcement learning can produce a
-meaningfully stronger Connect-4 agent than either hand-written rules or
-supervised imitation alone. Starting from a supervised network that
-mimicked Monte-Carlo tree search decisions, policy gradient self-play
-raised win rates to approximately 60\% against a mixed opponent pool,
-and our Deep Q-Network reached 72.5\% on the same evaluation protocol
---- a result we achieved in roughly two hours of GPU compute per
-training run. These agents beat every fixed heuristic we tested and
-are substantially harder to defeat than the supervised baselines we
+Our strongest agent in evaluation, the Soft Actor-Critic submission,
+lost its initial-round tournament matches to opponents combining
+learned policies with Monte-Carlo tree search at inference time
+(Section~\ref{ssec:tournament}). That outcome is the cleanest
+empirical case we have for the recommendation, so we lead with it:
+closing the gap to expert Connect-4 play requires tree search at
+inference, not just more or better RL training.
+
+That said, the pilot does establish the case for further investment
+in reinforcement learning itself, just within a clearly bounded
+scope. Starting from a supervised network that mimicked Monte-Carlo
+tree search decisions, policy gradient self-play raised win rates to
+approximately 60\% against a mixed opponent pool, and our Deep
+Q-Network reached 76.2\% on the same evaluation protocol --- a result
+we achieved in roughly two hours of GPU compute per training run.
+These agents beat every fixed heuristic we tested and are
+substantially harder to defeat than the supervised baselines we
 started from.
 
 That said, there are important qualifications before committing to a
