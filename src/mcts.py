@@ -366,10 +366,20 @@ class MCTSAgent:
 
         Score = -effective_q + c_puct · prior · √(N_parent_eff) / (1 + N_child_eff)
 
-        where N_*_eff = visits + virtual_loss, and effective Q treats
-        each virtual visit as if it were a loss (value_sum - virtual_loss).
-        Virtual loss biases parallel selection away from paths already
-        being explored by other in-flight simulations.
+        where N_*_eff = visits + virtual_loss. The virtual-loss
+        adjustment to value_sum looks counter-intuitive at first: we
+        ADD virtual_loss to child.value_sum rather than subtracting.
+        Reason: ``value_sum`` is stored in the CHILD's player's POV
+        (negamax convention). A pending visit through this child
+        represents a tentative "loss" for the player who chose to go
+        here -- the PARENT. From the parent's POV this is a -1; from
+        the child's POV it is a +1. Adding virtual_loss to the child's
+        value_sum (in its own POV) is exactly the negamax-correct way
+        to record that loss-for-parent. Parent's PUCT score for this
+        child is then -effective_value_sum / effective_visits, which
+        decreases as virtual_loss grows -- so other parallel sims see
+        this child as less attractive and diverge to siblings, which
+        is the whole point of virtual loss.
         """
         parent_eff = node.visits + node.virtual_loss
         sqrt_total = math.sqrt(max(parent_eff, 1))
@@ -379,8 +389,9 @@ class MCTSAgent:
         for col, child in node.children.items():
             child_eff = child.visits + child.virtual_loss
             if child_eff > 0:
-                # Virtual loss = -1 per virtual visit (pessimistic).
-                effective_value_sum = child.value_sum - child.virtual_loss
+                # +virtual_loss in the child's POV = -virtual_loss in the
+                # parent's POV (negamax). See docstring above for why.
+                effective_value_sum = child.value_sum + child.virtual_loss
                 q_parent_pov = -effective_value_sum / child_eff
             else:
                 q_parent_pov = 0.0
