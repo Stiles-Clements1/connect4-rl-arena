@@ -31,7 +31,7 @@
   Stiles Clements \quad Alina Hota \quad Luke Hartfield \quad Zan Merrill \\[0.6em]
   \normalsize MSBA 2026 Optimization II - Project 3
 }
-\date{\today}
+\date{April 27, 2026}
 
 \begin{document}
 \maketitle
@@ -47,10 +47,19 @@ policy gradient agent that directly optimises a column-distribution
 network through discounted-return-weighted log-probability gradients,
 and a Deep Q-Network agent that learns a state--action value function
 through a Double-DQN target with a replay buffer, target-network
-synchronisation, and curriculum self-play. On a shared evaluation
-harness, the policy gradient agent reached a $60.8\%$ mean win rate
-while the Deep Q-Network agent reached $76.2\%$ --- $+15.4$~percentage
-points stronger than the policy gradient agent on shared opponents.
+synchronisation, and curriculum self-play. On the evaluation harness
+described in Section~\ref{ssec:eval}, the policy gradient agent
+reached a $60.8\%$ mean win rate while the Deep Q-Network agent
+reached $76.2\%$ --- a gap of roughly $15$ percentage points, although
+the two agents were not evaluated on a strictly identical opponent
+set, so the comparison is suggestive rather than exact.
+Importantly, the $60.8\%$ figure for policy gradient is essentially
+the supervised warm-start baseline preserved by a snapshot-rollback
+wrapper: vanilla REINFORCE with sparse $\pm 1$ terminal rewards never
+reliably improved on the supervised starting point in our setting,
+and the rollback mechanism's only useful work was preventing
+degradation rather than locking in gains. The Deep Q-Network, by
+contrast, did improve on the warm start.
 A Soft Actor-Critic extension that fuses the two paradigms reached
 $75.5\%$ on the same opponents but beat the Deep Q-Network in direct
 head-to-head play, $92$--$8$ over $200$ games. Soft Actor-Critic was
@@ -62,13 +71,14 @@ time --- the empirical anchor for our recommendation that follows.
 We recommend hiring one reinforcement learning specialist for a 3--6
 month engagement to build an AlphaZero-style agent (a learned policy
 plus value network combined with Monte-Carlo tree search at inference
-time) on top of the codebase developed for this pilot. Self-play
-already produces an opponent substantially stronger than the
-supervised baselines we started from, but our tournament loss makes
-clear that closing the remaining gap to expert play requires tree
-search at inference, not just more or better RL training --- and tree
-search done well benefits from dedicated reinforcement-learning
-expertise.
+time) on top of the codebase developed for this pilot. The thesis is
+straightforward: reinforcement learning alone is not sufficient to
+reach expert-level play on Connect-4 --- our value-based and
+actor-critic agents reached useful but bounded strength against
+fixed-depth opponents and lost in tournament play to MCTS-augmented
+opponents --- but reinforcement learning combined with Monte-Carlo
+tree search at inference is a credible path forward, and tree search
+done well benefits from dedicated reinforcement-learning expertise.
 \end{abstract}
 
 % ── 1. Introduction ──────────────────────────────────────────────────────────
@@ -93,7 +103,8 @@ resembles in structure the games we actually sell (turn-based, perfect
 information, discrete action space), so lessons transfer.
 
 This report covers two reinforcement learning paradigms we implemented and
-compared. Policy gradient (Section~\ref{ssec:pg} and
+compared, plus an exploratory Soft Actor-Critic extension that fuses them.
+Policy gradient (Section~\ref{ssec:pg} and
 Section~\ref{sec:results}) directly optimizes a policy network
 $\pi_\theta(a \mid s)$ that outputs a probability distribution over moves:
 each parameter update is taken in the direction of the estimated gradient
@@ -102,11 +113,15 @@ expected return $R(\tau)$ over trajectories $\tau$. Deep Q-Network
 (Section~\ref{ssec:dqn}) instead learns a state-action value function
 $Q_\theta(s, a)$ that estimates the discounted return of playing column $a$
 in position $s$ and following a greedy policy thereafter; moves at play time
-are chosen as $\arg\max_a Q_\theta(s, a)$ over legal columns. Both agents are
+are chosen as $\arg\max_a Q_\theta(s, a)$ over legal columns. Soft
+Actor-Critic (Section~\ref{ssec:sac}), which we explored beyond the
+assignment's requirements, trains a stochastic policy and a value
+network jointly with entropy regularisation in the Bellman backup.
+All three agents are
 trained by self-play against a growing pool of opponents that includes
 supervised baseline networks from a previous project plus frozen snapshots
 of the improving agent itself. We measure performance by win rate against
-shared baseline opponents and by head-to-head play between the two agents.
+shared baseline opponents and by head-to-head play between the agents.
 
 The central questions this report answers for the reader are the following.
 (1) Does self-play reinforcement learning produce a meaningfully stronger
@@ -156,10 +171,17 @@ Three teammate groups (anonymised here as Groups~A, B, and~C) each
 contributed two supervised networks from a prior project, trained to
 mimic Monte-Carlo tree search decisions: one convolutional network and
 one Transformer per group, for six networks in total — labelled CNN-A
-through CNN-C and Transformer-A through Transformer-C. We designated
-Transformer-A as $M_1$, the agent we would improve via reinforcement
-learning. The remaining five networks plus the original (frozen) copy
-of Transformer-A formed the initial opponent pool. Per the assignment's
+through CNN-C and Transformer-A through Transformer-C. We initially
+designated Transformer-A as $M_1$, the agent we would improve via
+reinforcement learning. After the first several policy gradient runs
+under the Transformer ran into instability and slow training (detailed
+in Section~\ref{ssec:pg_results}), we switched $M_1$ to CNN-A
+mid-experiment to test whether a convolutional architecture would
+train faster and behave better under REINFORCE. CNN-A trained
+substantially faster per game and was the configuration that produced
+the final policy gradient agent reported in this paper. The remaining
+five networks plus the original (frozen) copies of both Transformer-A
+and CNN-A formed the initial opponent pool. Per the assignment's
 requirements, these original networks are never removed from the pool
 during training.
 
@@ -252,7 +274,15 @@ self-play games. Each group proceeds as follows.
     \item Periodically, a frozen copy of $M_1$'s current weights is added to
     the opponent pool. This enforces self-play against a moving target: as
     the agent improves, the pool slowly accumulates stronger versions of
-    itself while never removing the original supervised networks.
+    itself while never removing the original supervised networks. In
+    practice, snapshots of $M_1$ were added every $50$ groups during the
+    first two runs (which used the explicit group structure of $50$
+    games per group) and every $500$ games during the later per-game
+    runs once the group structure was dropped (Section~\ref{sssec:pg_run4}).
+    The opponent pool always contained the original frozen
+    Transformer-A and CNN-A networks regardless of how many self-play
+    snapshots had accumulated, so the agent could never drift onto a
+    pool that consisted only of its own near-copies.
 \end{enumerate}
 
 Opponents are treated slightly asymmetrically. When $M_2$'s turn arrives we
@@ -341,13 +371,24 @@ inserted as transitions into $\mathcal{D}$.
 
 In addition to the policy gradient and Deep Q-Network agents that form
 this report's primary comparison, we implemented a Soft Actor-Critic
-agent in its discrete-action form as an
-extension. Soft Actor-Critic is a natural fusion of the two paradigms
-covered in this course: it trains a policy network $\pi_\phi(a \mid s)$
-by gradient descent on log-probabilities (the policy gradient side) and
-a state-action value network $Q_\theta(s, a)$ by temporal-difference
-bootstrapping with a slowly-updated target network (the $Q$-learning
-side). The motivation was practical: vanilla policy gradient suffered
+agent in its discrete-action form as an exploratory extension. The
+assignment did not require an actor-critic implementation, but after
+the policy gradient runs failed to improve on the supervised warm
+start (Section~\ref{ssec:pg_results}) we wanted to test whether a
+hybrid method that fuses policy-gradient-style updates with
+$Q$-learning-style bootstrapping could overcome the variance issues
+that vanilla REINFORCE ran into. Soft Actor-Critic is a natural
+fusion of the two paradigms covered in this course: it trains a
+policy network $\pi_\phi(a \mid s)$ by gradient descent on
+log-probabilities (the policy gradient side) and a state-action value
+network $Q_\theta(s, a)$ by temporal-difference bootstrapping with a
+slowly-updated target network (the $Q$-learning side). We used CNN-C
+as the warm-start network for SAC --- a different choice from the
+Transformer-A/CNN-A we used as $M_1$ for the required PG track ---
+because we treated SAC as a separate exploratory branch and wanted to
+see whether a fresh starting point would behave differently from the
+networks the PG and DQN tracks had already iterated on. The
+motivation was practical: vanilla policy gradient suffered
 from high gradient variance under Connect-4's sparse $\pm 1$ reward and
 from catastrophic forgetting once $M_1$ outgrew most of the opponent
 pool, and an intermediate Actor-Critic implementation reduced the
@@ -903,7 +944,7 @@ follow-on work.
 \subsection{Deep Q-Network training}
 \label{ssec:dqn_results}
 
-We trained the DQN through three successive versions, each addressing
+We trained the DQN through four successive versions, each addressing
 concrete weaknesses identified in the previous run.
 
 \textbf{Version~1} served as a proof of concept. It used a basic CNN
@@ -961,8 +1002,12 @@ and Figure~\ref{fig:dqn_training}.
     \bottomrule
   \end{tabular}
   \caption{DQN win rates across training versions (greedy play, 200~games
-  each). All versions beat the PG baseline. v4 uses curriculum self-play
-  (20\%--50\% self-play fraction) and resumes from v3 weights.}
+  each). All versions beat the PG baseline. Self-play fractions differ
+  by version: v2 used a fixed mix that under-weighted self-play (resulting
+  in only 42\% self-play win rate), v3 used a fixed 55\% self-play
+  fraction, and v4 uses a curriculum that ramps self-play linearly from
+  20\% at episode~0 to 50\% by episode~600 while resuming from v3
+  weights.}
   \label{tab:dqn_progression}
 \end{table}
 
@@ -1012,17 +1057,21 @@ both agents on the same fixed evaluation opponents (Table~\ref{tab:headtohead}).
 
 \begin{table}[h]
   \centering
-  \begin{tabular}{lrrr}
+  \begin{tabular}{lr}
     \toprule
-    Agent & vs Random & vs Heuristic & Average \\
+    Agent & Mean win rate (shared baselines) \\
     \midrule
-    Policy Gradient (M1 final) & \multicolumn{2}{c}{[add from PG results]} & 60.8\% \\
-    DQN v4 (final)             & \textbf{82.0\%} & 70.5\% & \textbf{76.2\%} \\
+    Policy Gradient (CNN-A final, locked-in via rollback) & $60.8\%$ \\
+    DQN v4 (final)             & $\mathbf{76.2\%}$ \\
     \bottomrule
   \end{tabular}
-  \caption{Win rates on shared fixed opponents (200~games each, greedy
-  play, first player randomized). DQN v4 outperforms the policy gradient
-  agent by $+$15.4 percentage points on average.}
+  \caption{Mean win rates on shared fixed opponents (200~games each, greedy
+  play, first player randomized). The PG agent's $60.8\%$ is reported only
+  as an aggregate across the shared pool because, as detailed in
+  Section~\ref{ssec:pg_results}, the rollback wrapper preserved the
+  game-$500$ snapshot's behaviour rather than producing a
+  per-opponent-trained policy worth disaggregating. DQN v4 outperforms the
+  policy gradient agent by $+15.4$ percentage points on average.}
   \label{tab:headtohead}
 \end{table}
 
@@ -1112,7 +1161,7 @@ first player. Results are reported in Figure~\ref{fig:dqn_v_sac}.
   against the shared evaluation pool ($76.2\%$ for DQN, $75.5\%$ for
   SAC), the head-to-head reveals a much larger gap. SAC beats DQN
   $92$--$8$ in direct play and outperforms DQN against depth-$3$
-  minimax by a wide margin ($74\%$ vs.\ $12\%$). Both agents handle a
+  minimax by a wide margin ($81\%$ vs.\ $12\%$). Both agents handle a
   uniformly random opponent fine.}
   \label{fig:dqn_v_sac}
 \end{figure}
@@ -1120,7 +1169,7 @@ first player. Results are reported in Figure~\ref{fig:dqn_v_sac}.
 \textit{In plain terms:} despite reporting nearly identical mean win
 rates against the shared evaluation opponents, SAC dominates DQN when
 they play each other directly --- $92\%$ to $8\%$ over $200$ games.
-SAC also handily outplays depth-$3$ minimax ($74\%$ vs.\ DQN's $12\%$).
+SAC also handily outplays depth-$3$ minimax ($81\%$ vs.\ DQN's $12\%$).
 Both agents win essentially every game against a uniformly random
 opponent, as expected.
 
@@ -1173,6 +1222,29 @@ opponent types in v3.
 
 \subsection{What did not work}
 
+\textbf{Policy gradient training never produced measurable
+improvement over the supervised warm start.} As detailed in
+Section~\ref{ssec:pg_results}, seven training runs using vanilla
+REINFORCE with sparse $\pm 1$ terminal rewards failed to lift CNN-A's
+$60.8\%$ baseline win rate. Every run either left the policy on a
+random walk near $50\%$ win rate or actively degraded it; the final
+run, with a $500$-game snapshot-rollback wrapper, reverted on $7$
+consecutive checks and never improved beyond the game-$500$
+checkpoint. The diagnosis is structural rather than a tuning issue:
+near a $50\%$ win rate REINFORCE's expected gradient is approximately
+zero (wins and losses cancel in the average), and the estimator's
+variance under single-game $\pm 1$ rewards is high enough that
+individual updates are dominated by noise. Standard
+variance-reduction techniques --- within-batch return normalisation,
+entropy regularisation, tactical-strong opponents --- each turned out
+to suppress the very signal REINFORCE depends on, so adding them only
+made the collapses faster. The $60.8\%$ result reported as the PG
+baseline is therefore best read as a floor that the rollback wrapper
+preserved, not a ceiling REINFORCE climbed to. This is the main
+empirical reason we moved on to value-based and off-policy
+actor-critic methods, which use bootstrapped value estimates and
+have far lower gradient variance.
+
 \textbf{DQN v1 design.} The first DQN attempt used a deque-backed
 replay buffer that required converting the entire buffer to a list
 before every sample --- an $O(n)$ allocation called thousands of
@@ -1202,10 +1274,38 @@ expected to reach zero.
 
 The Soft Actor-Critic agent was our tournament submission, selected on
 the strength of the head-to-head dominance over DQN documented in
-Section~\ref{ssec:dqn_vs_sac}. In tournament play it performed
-poorly: we faced two opposing teams in succession and did not win a
-single game, against either opposing team, going either first or
-second. We were eliminated in the early rounds.
+Section~\ref{ssec:dqn_vs_sac}. Our team (Team~12) was placed in
+Pool~4 alongside Teams~4, 20, and 28 under the format published with
+the assignment: each pool plays six games (two per opponent, once as
+red and once as yellow), with the pool winner advancing to Bracket~A,
+second place to Bracket~B, third to Bracket~C, and last to
+Bracket~D.
+
+We played the first two of our three required pool matchups today
+(Monday, April~27), facing two opposing teams in succession. In
+both matchups we used the SAC agent. The results were:
+
+\begin{itemize}
+    \item \textbf{Match 1} (first opposing team): SAC lost both required games --- one
+    going first as red, one going second as yellow. Because the
+    matches were close enough that we wanted to be sure the loss was
+    not a fluke of the alternating-first-player draws, we played two
+    further confirmation games against the same opponent under the
+    same colour assignments. The result was unchanged: SAC lost both
+    confirmation games as well, going $0$--$4$ overall against this
+    opponent.
+    \item \textbf{Match 2} (second opposing team): SAC again lost both
+    games --- one as red, one as yellow --- going $0$--$2$ against
+    this opponent.
+\end{itemize}
+
+Across both matchups the SAC agent did not win a single game in
+either colour. It is worth noting that the agent did not play badly
+in absolute terms: most games lasted over $30$ moves before SAC was
+forced into a losing position, indicating that the agent was
+recognising and contesting threats well into the middlegame and was
+not making obvious tactical errors. The losses came from being
+out-planned several plies deep rather than from blunders.
 
 At least one of the opposing teams was running an agent that combined
 a learned policy with Monte-Carlo tree search at inference time. The
@@ -1216,7 +1316,10 @@ running alone. The search exposes forced sequences several plies
 deep --- the kind of multi-threat positions where one player builds
 two open three-in-a-row threats along the same diagonal that cannot
 both be blocked --- and the policy-only agent finds itself losing
-without having recognised the trap until it is unrecoverable.
+without having recognised the trap until it is unrecoverable. The
+$30$-plus-move games we observed are consistent with this picture:
+SAC played sound moves until the search-augmented opponent
+constructed a forced win that SAC could not see coming.
 
 This pattern is the empirical version of a gap our evaluation already
 hinted at. The strongest opponent in our shared evaluation pool was
@@ -1235,59 +1338,82 @@ section.
 \section{Recommendation}
 \label{sec:reco}
 
-\textbf{Short answer: yes, hire the specialist --- but for tree
-search, not for more model training.}
+\textbf{Thesis: reinforcement learning alone is not sufficient to
+reach expert-level play on Connect-4, but reinforcement learning
+combined with Monte-Carlo tree search at inference is a credible path
+forward --- and that combination warrants hiring a reinforcement
+learning specialist.}
 
-Our strongest agent in evaluation, the Soft Actor-Critic submission,
-lost its initial-round tournament matches to opponents combining
-learned policies with Monte-Carlo tree search at inference time
-(Section~\ref{ssec:tournament}). That outcome is the cleanest
-empirical case we have for the recommendation, so we lead with it:
-closing the gap to expert Connect-4 play requires tree search at
-inference, not just more or better RL training.
+The empirical anchor for this thesis is our tournament loss
+(Section~\ref{ssec:tournament}). Our strongest agent in evaluation,
+the Soft Actor-Critic submission, lost its initial-round tournament
+matches to opponents combining learned policies with Monte-Carlo tree
+search at inference time. SAC posted an $81\%$ win rate against
+depth-$3$ minimax in offline evaluation but went $0$--$4$ against
+MCTS-augmented opponents in live play. The gap between those two
+results is the gap a learned policy alone cannot close: depth-$3$
+minimax does not search far enough to construct multi-threat
+positions reliably, but tournament-level MCTS opponents do, and a
+policy network running without search has no mechanism to recognise
+those forced sequences before they become unrecoverable.
 
-That said, the pilot does establish the case for further investment
-in reinforcement learning itself, just within a clearly bounded
-scope. Starting from a supervised network that mimicked Monte-Carlo
-tree search decisions, policy gradient self-play raised win rates to
-approximately 60\% against a mixed opponent pool, and our Deep
-Q-Network reached 76.2\% on the same evaluation protocol --- a result
-we achieved in roughly two hours of GPU compute per training run.
-These agents beat every fixed heuristic we tested and are
-substantially harder to defeat than the supervised baselines we
-started from.
+\textbf{What the pilot does establish.} Within the bounded scope of
+RL training itself, the Deep Q-Network and Soft Actor-Critic agents
+both improved on their supervised warm starts and beat every fixed
+heuristic we tested. DQN reached $76.2\%$ mean win rate against
+shared baselines (up from a comparable supervised starting point) and
+SAC reached $75.5\%$ while playing dominant head-to-head against
+DQN ($92$--$8$). Both results were achieved in roughly two hours of
+GPU compute per training run on a Colab T4. We should be honest
+about how much of DQN's gain came from RL training and how much came
+from architecture and engineering changes that landed alongside the
+RL: the move from a plain CNN $Q$-network to a Dueling architecture,
+the replay-buffer reimplementation, $n$-step bootstrapped returns,
+and \texttt{@tf.function}-compiled training all contributed to the
+final $76.2\%$ alongside the curriculum self-play schedule. The
+self-play training was clearly doing useful work --- the v2-to-v3-to-v4
+progression shows it --- but the improvement is not purely an RL
+effect, and we would not want to oversell it as one.
 
-That said, there are important qualifications before committing to a
-production RL investment.
+\textbf{What the policy gradient track tells us.} The PG track is
+mostly a cautionary result rather than a positive one. Across seven
+training runs and approximately $20{,}000$ self-play games, vanilla
+REINFORCE with sparse $\pm 1$ terminal rewards never reliably
+improved on the supervised warm-start. The $60.8\%$ figure that
+appears in the PG row of Table~\ref{tab:headtohead} is essentially
+the warm-start network's strength preserved by a snapshot-rollback
+wrapper, not a level the gradient updates climbed to. We do not lean
+on this number to justify further RL investment; we report it
+honestly because the negative result helped motivate the move to
+value-based and off-policy actor-critic methods, which use
+bootstrapped value estimates and have far lower gradient variance.
 
-\textbf{What the results justify.} Both PG and DQN improved measurably
-over the supervised starting point without any hand-written game
-knowledge for the agent under training. The DQN's gains were more
-consistent across opponent types (72--73\% across random, heuristic,
-and self-play opponents) and required less domain intuition to achieve
-than the policy gradient approach. For a company with GPU access and a
-few weeks of iteration time, DQN self-play is a tractable path to a
-competent single-player opponent.
+\textbf{What the results do not yet justify.} Neither agent
+approaches optimal play. Connect-4 is solved (the first player wins
+with perfect play), and our best agent still loses meaningful
+fractions of games against a $1$-ply heuristic and lost every
+tournament game to MCTS-augmented opponents. Closing that gap is not
+a tuning problem: the techniques we did not implement --- Monte-Carlo
+tree search guided by the neural network (AlphaZero-style),
+population-based training across many parallel agents, distributional
+$Q$-learning --- are structural additions, not hyperparameter sweeps.
 
-\textbf{What the results do not yet justify.} Neither agent approaches
-optimal play. Connect-4 is a solved game in which the first player wins
-with perfect play; our best agent still loses meaningful fractions of
-games against a 1-ply heuristic. Closing that gap would require
-techniques we did not implement: Monte-Carlo tree search guided by the
-neural network (AlphaZero-style), population-based training across many
-parallel agents, or distributional Q-learning to better model the
-variance of long-horizon outcomes.
-
-\textbf{Hiring recommendation.} We recommend hiring one RL specialist
-for a 3--6 month engagement with a specific deliverable: an
-AlphaZero-style agent that combines learned value and policy networks
-with tree search at inference time. Our codebase provides the game
-engine, board representation, and opponent pool infrastructure; the
-specialist's job would be to add the MCTS layer and the accompanying
-self-play data pipeline. This is the most direct path from our current
-72\% win rate to an agent that could challenge expert human players and
-serve as a credible single-player opponent in a commercial product.
-Attempting this without dedicated expertise would likely require
-significantly more calendar time and produce lower-quality results.
+\textbf{Hiring recommendation.} We recommend hiring one
+reinforcement-learning specialist for a 3--6 month engagement with a
+specific deliverable: an AlphaZero-style agent that combines learned
+value and policy networks with Monte-Carlo tree search at inference
+time, built on top of the DQN and SAC codebase developed in this
+pilot. The pilot delivers the game engine, board representation,
+opponent-pool infrastructure, and trained value/policy networks; the
+specialist's job is to add the MCTS layer and the accompanying
+self-play data pipeline that uses search-guided targets to improve
+the neural networks themselves. This is the most direct path from
+our current results to an agent that could challenge expert human
+players and serve as a credible single-player opponent in a
+commercial product. Attempting this without dedicated expertise would
+likely require significantly more calendar time and produce
+lower-quality results --- and would replicate the kind of MCTS-only
+or RL-only paths that we know from the tournament are not on their
+own enough.
 
 \end{document}
